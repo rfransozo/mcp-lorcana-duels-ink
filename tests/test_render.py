@@ -26,11 +26,14 @@ class TestCapabilityMap:
     def test_only_observed_flags_are_mapped(self):
         """Every mapped flag has been seen on the wire, and only those.
 
-        canBoost and canActivate were once mapped from guesswork and had to go:
-        the server rejected the actions they produced. canMove went the other
-        way - it was removed as invented, then turned up in a live game the
-        moment a location was in play. A board without a location never reports
-        it, which is why it stayed hidden through every earlier test.
+        canMove and canBoost were both removed once as invented, and both are
+        real: they are simply conditional on the board. canMove needs a
+        location in play, canBoost needs a Boost character *and* the ink to
+        pay. No fixture had either, so every test agreed they did not exist
+        until a deck built around locations and items proved otherwise.
+
+        canActivate is the one that really is absent - activated abilities
+        arrive as a structured `activatedAbilities` list instead.
         """
         assert set(CAPABILITY_TOOLS) == {
             "canInk",
@@ -39,8 +42,8 @@ class TestCapabilityMap:
             "canChallenge",
             "canSing",
             "canMove",
+            "canBoost",
         }
-        assert "canBoost" not in CAPABILITY_TOOLS
         assert "canActivate" not in CAPABILITY_TOOLS
 
     def test_zones_partition_the_mapped_flags(self):
@@ -357,6 +360,26 @@ class TestLocationsAndActivatedAbilities:
         }
         base.update(over)
         return base
+
+    async def test_boost_becomes_a_move_with_its_cost(self, catalog):
+        """canBoost only appears with a Boost character and the ink to pay."""
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_ELSA].update(
+            {"canBoost": True, "boostCost": 2}
+        )
+        payload = await render_game_state(game, catalog)
+        move = next(m for m in payload["legal_moves"]
+                    if m["args"].get("action_type") == "BOOST")
+        assert move["args"]["payload"] == {"cardInstanceId": games.FIELD_ELSA}
+        assert "2 ink" in move["why"]
+
+    async def test_effective_strength_beats_the_printed_one(self, catalog):
+        """A boosted Hercules reads 0/3 on the card and hits for 3. The
+        engine knows; the catalogue does not."""
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_ELSA]["effectiveStrength"] = 4
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "4/3, base 1" in text
 
     async def test_can_move_offers_each_location(self, catalog):
         game = games.playing()

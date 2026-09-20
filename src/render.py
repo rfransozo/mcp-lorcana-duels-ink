@@ -20,9 +20,11 @@ from .formatting import join_lines
 # the tool that performs them.
 #
 # Only flags actually observed on the wire are listed. Duels.ink reports
-# canInk, canPlay, canQuest, canChallenge, canSing and canMove (plus the
-# non-actions below). canMove only appears once you control a location, which
-# is why it went unnoticed for so long - a board without one never shows it.
+# canInk, canPlay, canQuest, canChallenge, canSing, canMove and canBoost (plus
+# the non-actions below). The last two are conditional on the board: canMove
+# needs a location in play and canBoost needs both a Boost character and the
+# ink to pay for it, so neither shows up until the game reaches that state.
+# Both were once written off as invented for exactly that reason.
 #
 # There is no top-level canActivate: activated abilities arrive as a separate
 # `activatedAbilities` list on the card, handled in _activated_moves.
@@ -33,10 +35,11 @@ CAPABILITY_TOOLS = {
     "canChallenge": ("duels_challenge", "Challenge an opposing character"),
     "canSing": ("duels_play_card", "Sing this song using an exerted singer"),
     "canMove": ("duels_send_game_action", "Move this character to one of your locations"),
+    "canBoost": ("duels_send_game_action", "Boost this character"),
 }
 
 HAND_CAPABILITIES = {"canInk", "canPlay", "canSing"}
-BOARD_CAPABILITIES = {"canQuest", "canChallenge", "canMove"}
+BOARD_CAPABILITIES = {"canQuest", "canChallenge", "canMove", "canBoost"}
 
 # Flags that describe a property rather than an action the agent can take.
 # Observed set of booleans on a card entry: canAffordInkCost, canBeSinger,
@@ -135,6 +138,14 @@ async def _describe_card(
         )
         if blocked:
             out["blocked"] = blocked
+        # A boosted or buffed character is not what the catalogue says it is.
+        # Hercules reads 0/3 on the card and hits for 3 once boosted.
+        if actions.get("effectiveStrength") is not None:
+            out["effective_strength"] = actions["effectiveStrength"]
+        if actions.get("effectiveLore") is not None:
+            out["effective_lore"] = actions["effectiveLore"]
+        if actions.get("boostCost") is not None:
+            out["boost_cost"] = actions["boostCost"]
         abilities = [a for a in actions.get("activatedAbilities") or [] if a.get("name")]
         if abilities:
             out["activated_abilities"] = abilities
@@ -352,6 +363,24 @@ def _legal_moves(
                     continue
 
                 tool, why = mapped
+                if flag == "canBoost":
+                    cost = entry.get("boost_cost")
+                    moves.append(
+                        {
+                            "tool": tool,
+                            "why": (
+                                f"Boost {entry['card']}"
+                                + (f" for {cost} ink" if cost is not None else "")
+                            ),
+                            "args": {
+                                "game_id": game_id,
+                                "action_type": "BOOST",
+                                "payload": {"cardInstanceId": entry["instance_id"]},
+                            },
+                        }
+                    )
+                    continue
+
                 if flag == "canMove":
                     for loc in [e for e in described_field if e.get("type") == "location"]:
                         moves.append(
@@ -544,9 +573,13 @@ def _card_line(entry: dict, show_actions: bool = True, seen: Optional[set] = Non
         stats.append(f"{entry['cost']} ink")
     if entry.get("strength") is not None and entry.get("willpower") is not None:
         wp = entry.get("willpower_remaining", entry["willpower"])
-        stats.append(f"{entry['strength']}/{wp}")
-    if entry.get("lore"):
-        stats.append(f"{entry['lore']} lore")
+        strength = entry.get("effective_strength", entry["strength"])
+        stats.append(f"{strength}/{wp}")
+        if strength != entry["strength"]:
+            stats.append(f"base {entry['strength']}")
+    lore = entry.get("effective_lore", entry.get("lore"))
+    if lore:
+        stats.append(f"{lore} lore")
     if entry.get("ink"):
         stats.append(entry["ink"])
     if stats:
@@ -561,6 +594,8 @@ def _card_line(entry: dict, show_actions: bool = True, seen: Optional[set] = Non
         flags.append("just played (ink is dry next turn)")
     if entry.get("inkable") is False:
         flags.append("not inkable")
+    if entry.get("cards_under"):
+        flags.append(f"{entry['cards_under']} under")
     if flags:
         bits.append(f"[{', '.join(flags)}]")
 

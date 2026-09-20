@@ -113,12 +113,22 @@ out. Both keys look alike in the logs, so this one cost a turn to find.
 ## Card capability flags
 
 `game.availableActions.cards[instanceId]` booleans observed in play:
-`canInk`, `canPlay`, `canQuest`, `canChallenge`, `canSing`, `canMove`, plus the
-non-actions `canAffordInkCost`, `canBeSinger` and `hasSingTogether`.
+`canInk`, `canPlay`, `canQuest`, `canChallenge`, `canSing`, `canMove`,
+`canBoost`, plus the non-actions `canAffordInkCost`, `canBeSinger` and
+`hasSingTogether`.
 
-`canMove` only appears once you control a location, so a board without one
-never reveals it - it was wrongly written off as nonexistent until a deck with
-locations was played. It is answered with `MOVE_TO_LOCATION`.
+`canMove` and `canBoost` are conditional on the board, which is why both were
+once wrongly written off as nonexistent. `canMove` needs a location in play and
+is answered with `MOVE_TO_LOCATION`. `canBoost` needs a Boost character *and*
+enough ink; it carries `boostCost` and, when spent, `boostBlockedReason:
+"Already used this turn"`. It is answered with `BOOST` carrying
+`cardInstanceId`.
+
+`effectiveStrength` and `effectiveLore` are the values after buffs, and they
+are what the board actually uses - a boosted Hercules prints 0/3 in the
+catalogue and hits for 3. `effectiveStrength` is only sent when a challenge is
+computable, so the printed value is the fallback; `cardsUnder` is the other
+hint that a character is bigger than its card.
 
 Every refusal is explained, not just unplayable cards: `playBlockedReason`
 ("Need 3 ink"), `questBlockedReason` / `challengeBlockedReason` ("Ink dry (no
