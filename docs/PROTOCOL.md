@@ -93,7 +93,7 @@ sending the wrong one is rejected with "Character not on field!".
 
 | Prompt `type` | Response `type` | Extra fields |
 |---|---|---|
-| `select_trigger` | `skip_trigger` / `resolve_trigger` | `triggerId` |
+| `select_trigger` | `select_trigger` (accept) / `skip_trigger` | `triggerId` |
 | `boolean` | `boolean` | `value` (bool) |
 | `select_target` | `select_target` | `targetInstanceIds` (list) |
 | `select_card` | `select_card` | `cardInstanceIds` (list) |
@@ -109,10 +109,11 @@ A prompt with `minSelect: 0` can be declined, and sometimes must be: Support
 with no friendly character left offers only the opponent's, and accepting
 buffs them. Declining is an empty `targetInstanceIds` / `cardInstanceIds`.
 
-Still unresolved: answering an **optional** `select_trigger` with
-`resolve_trigger` was rejected as "Invalid prompt response" in a live game,
-while `skip_trigger` worked. Only one observation so far, so the accept verb
-for optional triggers is not yet confirmed.
+Accepting a trigger echoes the prompt's own type, `select_trigger`; only
+declining has a verb of its own, `skip_trigger`. The symmetrical-looking
+`resolve_trigger` does not exist and is rejected as "Invalid prompt
+response" - which hid the problem for a while, since declining worked and
+only acceptance was broken.
 
 `select_card` answers under `cardInstanceIds`, **not** `selectedCardIds` - that
 key belongs to `MULLIGAN`, and sending it here is simply ignored: no
@@ -140,8 +141,15 @@ enough ink; it carries `boostCost` and, when spent, `boostBlockedReason:
 `effectiveStrength` and `effectiveLore` are the values after buffs, and they
 are what the board actually uses - a boosted Hercules prints 0/3 in the
 catalogue and hits for 3. `effectiveStrength` is only sent when a challenge is
-computable, so the printed value is the fallback; `cardsUnder` is the other
-hint that a character is bigger than its card.
+computable, so outside combat it is simply absent.
+
+There is nowhere else to get it. A card in play carries only `definitionId`,
+`instanceId`, `damage`, `exerted`, `justPlayed`, `appliedEffects`,
+`cardsUnder` and `hasQuestedThisTurn` - no strength field of any kind. Base
+stats come from the catalogue via `definitionId`, temporary buffs sit in
+`appliedEffects` and Boost-style ones in `cardsUnder`. When the engine does
+not compute the total, the parts are all there is, so all three are
+rendered.
 
 Every refusal is explained, not just unplayable cards: `playBlockedReason`
 ("Need 3 ink"), `questBlockedReason` / `challengeBlockedReason` ("Ink dry (no

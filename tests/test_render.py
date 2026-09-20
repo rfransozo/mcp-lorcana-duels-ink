@@ -368,6 +368,30 @@ class TestLocationsAndActivatedAbilities:
         base.update(over)
         return base
 
+    async def test_applied_effects_are_shown(self, catalog):
+        """The in-game card object carries no strength at all - only
+        definitionId, damage, exerted, justPlayed, appliedEffects, cardsUnder
+        and hasQuestedThisTurn. Base stats come from the catalogue and buffs
+        live in appliedEffects, so a character whose printed stats are stale
+        says so nowhere else. effectiveStrength would settle it, but the
+        engine only computes that when a challenge is possible."""
+        game = games.playing()
+        elsa = next(c for c in game["myPlayer"]["field"]
+                    if c["instanceId"] == games.FIELD_ELSA)
+        elsa["appliedEffects"] = [{"name": "Challenger +2"}]
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Challenger +2" in text
+
+    async def test_effects_of_an_unknown_shape_still_render(self, catalog):
+        """appliedEffects was never observed populated, so the element shape
+        is a guess. Anything readable beats silently dropping it."""
+        game = games.playing()
+        elsa = next(c for c in game["myPlayer"]["field"]
+                    if c["instanceId"] == games.FIELD_ELSA)
+        elsa["appliedEffects"] = ["STRENGTH_UP", {"type": "WARD_GRANTED"}]
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "STRENGTH_UP" in text and "WARD_GRANTED" in text
+
     async def test_boost_becomes_a_move_with_its_cost(self, catalog):
         """canBoost only appears with a Boost character and the ink to pay."""
         game = games.playing()

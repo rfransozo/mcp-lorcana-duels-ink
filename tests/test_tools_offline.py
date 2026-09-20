@@ -278,10 +278,21 @@ class TestPrompts:
         assert response["triggerId"] == "trigger-1"
 
     async def test_trigger_resolve(self, router, mcp_client):
+        """Accepting echoes the prompt's own type.
+
+        This asserted `resolve_trigger` for a long time, which reads as the
+        natural partner to skip_trigger and is not a thing on the wire. The
+        engine rejected every acceptance sent that way, and because declining
+        worked the gap stayed invisible: optional abilities could be refused
+        but never used. Confirmed against a live game by trying the variants
+        until one was acknowledged.
+        """
         server, _ = await self._with_prompt(
             router, mcp_client, prompts.SELECT_TRIGGER, choice="resolve"
         )
-        assert server.received[-1]["action"]["response"]["type"] == "resolve_trigger"
+        response = server.received[-1]["action"]["response"]
+        assert response["type"] == "select_trigger"
+        assert response["triggerId"] == "trigger-1"
 
     async def test_select_target(self, router, mcp_client):
         server, _ = await self._with_prompt(

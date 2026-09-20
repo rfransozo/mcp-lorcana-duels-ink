@@ -189,6 +189,23 @@ async def _describe_zone(
     return out
 
 
+def _effect_label(effect: object) -> str:
+    """A readable name for one applied effect, whatever shape it arrives in.
+
+    The engine sends appliedEffects as a list and the board was always empty
+    when it was inspected, so the element shape is not pinned down. Read the
+    usual keys when it is a mapping and fall back to str() otherwise, rather
+    than guessing a schema and dropping anything that does not match.
+    """
+    if isinstance(effect, dict):
+        for key in ("name", "abilityName", "description", "type", "effect"):
+            value = effect.get(key)
+            if value:
+                return str(value)
+        return ", ".join(f"{k}={v}" for k, v in effect.items() if v is not None) or "effect"
+    return str(effect)
+
+
 def _challenge_outcome(info: dict, target: str) -> str:
     """One line saying what this challenge actually does to both sides."""
     to_them = info.get("damageToTarget")
@@ -602,6 +619,12 @@ def _card_line(entry: dict, show_actions: bool = True, seen: Optional[set] = Non
         flags.append("not inkable")
     if entry.get("cards_under"):
         flags.append(f"{entry['cards_under']} under")
+    for effect in entry.get("effects") or []:
+        # A buff already applied to this character. The engine only computes
+        # the resulting strength as effectiveStrength, and only when a
+        # challenge is possible, so outside combat this line is the only sign
+        # that the printed stats are not the real ones.
+        flags.append(_effect_label(effect))
     if flags:
         bits.append(f"[{', '.join(flags)}]")
 

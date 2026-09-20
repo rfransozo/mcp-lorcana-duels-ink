@@ -863,7 +863,13 @@ async def duels_respond_to_prompt(
         if normalised in ("skip", "no", "decline"):
             response.update({"type": "skip_trigger", "triggerId": chosen})
         elif normalised in ("resolve", "yes", "accept", ""):
-            response.update({"type": "resolve_trigger", "triggerId": chosen})
+            # Accepting echoes the prompt's own type. There is no
+            # `resolve_trigger` on the wire - it was a guess that paired
+            # plausibly with skip_trigger, and the engine rejected every
+            # optional "you may" ability sent that way. Declining worked, so
+            # the asymmetry went unnoticed: the agent could refuse a trigger
+            # but never use one.
+            response.update({"type": "select_trigger", "triggerId": chosen})
         else:
             raise DuelsError(
                 f"choice must be 'resolve' or 'skip' for a select_trigger prompt, got {choice!r}."
