@@ -15,6 +15,11 @@ No network, no account, no games created. It finishes in under ten seconds.
 |---|---|
 | `test_formatting.py`, `test_models.py` | Pagination envelope, markdown helpers, shared parameter constraints |
 | `test_client.py` | Cookie handling, HTTP status to actionable message, ws-token URL composition, SSE parsing |
+| `test_tools_account.py` | Friends, invites, match history, replays, leaderboard, seasons, whoami |
+| `test_tools_decks.py` | Building, renaming, deleting and importing decks; draft, sealed and playground |
+| `test_tools_play.py` | Bot games, tables, and entering or leaving the matchmaking queue |
+| `test_tools_ingame.py` | The game log, waiting for a turn, conceding, and the odd prompt shapes |
+| `test_resources.py` | The `duels://` resources, which are addressed by URI rather than called |
 | `test_matchmaking.py` | Queue heartbeat, accepting a pairing inside its window, falling back when the stream drops |
 | `test_cards.py` | Per-set lazy loading, batch resolution, search filters |
 | `test_render.py` | Phase gates, zone filtering, move arguments, board description |
@@ -28,6 +33,23 @@ No network, no account, no games created. It finishes in under ten seconds.
 Fixtures in `tests/fixtures/` are written by hand from the shapes verified in
 [PROTOCOL.md](PROTOCOL.md), rather than recorded traffic. The cards are real and
 their values match `evals/duels_eval.xml`.
+
+## Coverage
+
+```bash
+pytest --cov=src --cov-report=json
+python scripts/coverage_gate.py
+```
+
+The floor is **85% per module**, not 85% overall. A single total hides the one
+case that matters: four modules sat under 45% - social, history, resources and
+play - while the total read a comfortable 72% and nothing complained.
+coverage.py only knows a global `fail_under`, so the per-module check is its
+own script.
+
+It is a script rather than a test because as a test it would fail whenever
+someone ran a subset of the suite under coverage, which is a normal thing to do
+and not a defect.
 
 ## The property test
 

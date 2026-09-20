@@ -15,6 +15,7 @@ desktop.ini
 Thumbs.db
 .pytest_cache/
 .coverage
+coverage.json
 htmlcov/
 
 # Config local do Claude Code (caminhos absolutos desta máquina)

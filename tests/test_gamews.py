@@ -23,9 +23,28 @@ class FakeGameServer:
     by a `game_update`, which is the real exchange.
     """
 
-    def __init__(self, game: dict | None = None, *, accept: bool = True) -> None:
+    def __init__(
+        self,
+        game: dict | None = None,
+        *,
+        accept: bool = True,
+        logs: list[dict] | None = None,
+        silent: bool = False,
+        never_ack: bool = False,
+        ack_key: str = "success",
+    ) -> None:
         self.game = game or games.playing()
         self.accept = accept
+        # Connect, then say nothing - the real server does this for a game
+        # that has finished.
+        self.silent = silent
+        # Swallow actions without acknowledging them.
+        self.never_ack = never_ack
+        # Some acknowledgements come back as `ok` rather than `success`.
+        self.ack_key = ack_key
+        # Pushed right after init, the way the real server backfills history
+        # on connect.
+        self.logs = logs or []
         self.received: list[dict] = []
         self.connections = 0
         self._server = None
@@ -44,6 +63,11 @@ class FakeGameServer:
         sock = next(iter(self._server.sockets))
         return f"ws://127.0.0.1:{sock.getsockname()[1]}"
 
+    async def push(self, message: dict) -> None:
+        """Send an unsolicited message, as the server does for presence."""
+        for ws in list(self._sockets):
+            await ws.send(json.dumps(message))
+
     async def drop_all(self) -> None:
         """Simulate the connection dropping under us."""
         for ws in list(self._sockets):
@@ -53,7 +77,18 @@ class FakeGameServer:
     async def _handle(self, websocket) -> None:
         self.connections += 1
         self._sockets.append(websocket)
+        if self.silent:
+            try:
+                await websocket.wait_closed()
+            finally:
+                if websocket in self._sockets:
+                    self._sockets.remove(websocket)
+            return
         await websocket.send(json.dumps({"type": "init", "game": self.game, "buildId": "test-build"}))
+        if self.logs:
+            await websocket.send(
+                json.dumps({"type": "game_log", "logs": self.logs, "fromIndex": 0})
+            )
         try:
             async for raw in websocket:
                 message = json.loads(raw)
@@ -63,9 +98,11 @@ class FakeGameServer:
                 if message.get("type") != "action":
                     continue
                 self.received.append(message)
+                if self.never_ack:
+                    continue
                 if self.accept:
                     await websocket.send(
-                        json.dumps({"type": "action_result", "success": True,
+                        json.dumps({"type": "action_result", self.ack_key: True,
                                     "requestId": message.get("requestId")})
                     )
                     self.game = {**self.game, "stateVersion": self.game.get("stateVersion", 0) + 1}
@@ -357,3 +394,124 @@ class TestRegistry:
             await registry.close_all()
             assert registry.active_ids() == []
             await client.aclose()
+
+
+class TestPresenceAndHeartbeat:
+    """Unsolicited pushes: nobody asks for these, they just arrive."""
+
+    async def test_a_disconnect_is_noticed(self, ws_setup):
+        server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        assert conn.opponent_connected is None, "unknown until the server says"
+        await server.push({"type": "player_disconnected", "playerNumber": 1})
+        await conn.wait_for_update(timeout=2.0)
+        assert conn.opponent_connected is False
+
+    async def test_a_reconnect_is_noticed_too(self, ws_setup):
+        """An opponent who drops and comes back must not be left marked
+        absent - CLAIM_AFK_VICTORY hangs off this."""
+        server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        await server.push({"type": "player_disconnected", "playerNumber": 1})
+        await conn.wait_for_update(timeout=2.0)
+        await server.push({"type": "player_connected", "playerNumber": 1})
+        await conn.wait_for_update(timeout=2.0)
+        assert conn.opponent_connected is True
+
+    async def test_a_heartbeat_refreshes_the_build_id(self, ws_setup):
+        """The build id is how a deploy mid-game becomes visible."""
+        _server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        assert conn.build_id == "test-build"
+        await _server.push({"type": "heartbeat", "timestamp": 1, "buildId": "new-build"})
+        await asyncio.sleep(0.1)
+        assert conn.build_id == "new-build"
+
+    async def test_a_binary_frame_is_ignored(self, ws_setup):
+        """The socket is JSON text; a binary frame must not kill the reader."""
+        server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        for ws in list(server._sockets):
+            await ws.send(b"\x00\x01\x02")
+        await server.push({"type": "game_update", "game": server.game})
+        assert await conn.wait_for_update(timeout=2.0)
+
+    async def test_a_malformed_frame_is_ignored(self, ws_setup):
+        server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        for ws in list(server._sockets):
+            await ws.send("not json at all")
+        await server.push({"type": "game_update", "game": server.game})
+        assert await conn.wait_for_update(timeout=2.0)
+
+
+class TestAcknowledgements:
+    async def test_ok_is_accepted_as_well_as_success(self, router, make_client):
+        """Both spellings appear on the wire, and treating `ok` as a failure
+        would abort a move that actually landed."""
+        async with FakeGameServer(ack_key="ok") as server:
+            router.json_on("/api/game/g1/ws-token", {"token": "t", "wsUrl": server.url})
+            conn = GameConnection(make_client(), "g1")
+            try:
+                result = await conn.send_action({"type": "QUEST"})
+                assert result.get("ok") is True
+            finally:
+                await conn.close()
+
+    async def test_an_unacknowledged_action_says_it_may_have_applied(
+        self, router, make_client, monkeypatch
+    ):
+        """Re-sending a move that silently landed would play it twice."""
+        monkeypatch.setattr("src.gamews.ACTION_TIMEOUT_SECONDS", 0.2)
+        async with FakeGameServer(never_ack=True) as server:
+            router.json_on("/api/game/g1/ws-token", {"token": "t", "wsUrl": server.url})
+            conn = GameConnection(make_client(), "g1")
+            try:
+                with pytest.raises(DuelsError, match="may have applied"):
+                    await conn.send_action({"type": "QUEST"})
+            finally:
+                await conn.close()
+
+    async def test_sending_on_a_dead_socket_is_actionable(self, ws_setup):
+        server, conn, _client, _router = ws_setup
+        await conn.ensure_connected()
+        await server.drop_all()
+        await server.__aexit__()
+        with pytest.raises(DuelsError):
+            await conn.send_action({"type": "QUEST"})
+
+
+class TestConnectFailures:
+    async def test_a_socket_that_never_sends_state_is_reported(
+        self, router, make_client, monkeypatch
+    ):
+        """Connecting is not the same as being in a game; a finished game
+        accepts the socket and then says nothing."""
+        monkeypatch.setattr("src.gamews.CONNECT_TIMEOUT_SECONDS", 0.3)
+        async with FakeGameServer(silent=True) as server:
+            router.json_on("/api/game/g1/ws-token", {"token": "t", "wsUrl": server.url})
+            conn = GameConnection(make_client(), "g1")
+            try:
+                with pytest.raises(DuelsError, match="never received the initial state"):
+                    await conn.ensure_connected()
+            finally:
+                await conn.close()
+
+
+class TestRegistrySessions:
+    async def test_a_later_session_id_upgrades_an_anonymous_connection(
+        self, router, make_client
+    ):
+        """The first call may not know the sessionId; losing it would make
+        every later call on an anonymous game unauthorised."""
+        async with FakeGameServer() as server:
+            router.json_on("/api/game/g1/ws-token", {"token": "t", "wsUrl": server.url})
+            registry = GameRegistry(make_client())
+            try:
+                conn = await registry.get("g1")
+                assert conn.session_id is None
+                again = await registry.get("g1", "sess-1")
+                assert again is conn
+                assert conn.session_id == "sess-1"
+            finally:
+                await registry.close_all()

@@ -5,6 +5,7 @@ REST API and a small in-process server stands in for the game WebSocket, so the
 whole suite is deterministic and needs no network.
 """
 
+import contextlib
 import json
 import os
 import pathlib
@@ -138,13 +139,19 @@ async def catalog(client: DuelsClient) -> CardCatalog:
 # -----------------------------------------------------------------
 # MCP server double
 # -----------------------------------------------------------------
-@pytest.fixture
-async def mcp_client(monkeypatch, router: RecordingRouter):
+@contextlib.asynccontextmanager
+async def _mcp_server(monkeypatch, router: RecordingRouter, cookie: Optional[str]):
     """A FastMCP in-memory Client whose lifespan builds the mocked DuelsClient.
 
     This exercises the real tools, the real lifespan and the real schemas -
-    only the network is replaced.
+    only the network is replaced. The cookie is passed through the environment
+    because that is where the lifespan reads it from, so signing in for a test
+    goes through exactly the path a real run does.
     """
+    if cookie:
+        monkeypatch.setenv("DUELS_SESSION_COOKIE", cookie)
+    else:
+        monkeypatch.delenv("DUELS_SESSION_COOKIE", raising=False)
     from fastmcp import Client
 
     import src.app as app_module
@@ -174,13 +181,31 @@ async def mcp_client(monkeypatch, router: RecordingRouter):
         yield c
 
 
-async def call_text(mcp_client, name: str, **kwargs: Any) -> str:
-    """Call a tool and return its text output."""
+@pytest.fixture
+async def mcp_client(monkeypatch, router: RecordingRouter):
+    """The server as an anonymous visitor sees it."""
+    async with _mcp_server(monkeypatch, router, None) as c:
+        yield c
+
+
+@pytest.fixture
+async def authed_mcp_client(monkeypatch, router: RecordingRouter):
+    """The server signed in - most tools refuse to do anything without this."""
+    async with _mcp_server(monkeypatch, router, "test-session-token") as c:
+        yield c
+
+
+async def call_text(mcp_client, name: str, /, **kwargs: Any) -> str:
+    """Call a tool and return its text output.
+
+    Both parameters are positional-only: several tools take an argument of
+    their own called `name`, and it would otherwise collide with this one.
+    """
     result = await mcp_client.call_tool(name, kwargs)
     return result.content[0].text
 
 
-async def call_json(mcp_client, name: str, **kwargs: Any) -> Any:
+async def call_json(mcp_client, name: str, /, **kwargs: Any) -> Any:
     """Call a tool in JSON mode and parse the result.
 
     Returns {"__error__": text} when the tool reported an error, so tests can
