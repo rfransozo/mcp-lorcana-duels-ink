@@ -198,6 +198,22 @@ class TestDocstrings:
         missing = [name for name, doc in docs.items() if "Args:" not in doc]
         assert missing == []
 
+    def test_every_tool_shows_a_worked_example(self):
+        """An agent adopts a tool faster from one concrete call than from a
+        paragraph of prose. Flagged in the MCPize quality review."""
+        docs = source_docstrings()
+        missing = [name for name, doc in docs.items() if "Examples:" not in doc]
+        assert missing == []
+
+    def test_examples_show_an_actual_invocation(self):
+        """An Examples block that only restates the description is not one."""
+        thin = []
+        for name, doc in source_docstrings().items():
+            block = doc.split("Examples:", 1)[1].split("Error Handling:")[0]
+            if "->" not in block:
+                thin.append(name)
+        assert thin == []
+
     def test_source_docstrings_cover_every_exposed_tool(self):
         """Guards the AST lookup itself: a renamed module would otherwise make
         the two checks above silently pass on an empty set."""

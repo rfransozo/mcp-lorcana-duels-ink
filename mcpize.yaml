@@ -20,13 +20,25 @@ build:
 startCommand:
   type: http
   command: python src/server.py
-user_secrets:
+
+# Cada jogador usa a PRÓPRIA conta do Duels.ink. Sem isto o servidor roda em
+# modo "shared" e ninguém é solicitado a informar o cookie.
+# ⚠️  A chave é `credentials` — `user_secrets` NÃO existe no schema do manifest
+#     e é descartada em silêncio.
+credentials_mode: per_user
+credentials:
   - name: DUELS_SESSION_COOKIE
-    description: >
-      Optional. Your Duels.ink session cookie, which unlocks your own decks,
-      ranked matchmaking, private tables, friends and match history. Without it
-      the server still works anonymously for bot games, the card catalog and
-      public decks. To get it: sign in at https://duels.ink, open DevTools (F12),
-      go to Application > Cookies > https://duels.ink, and copy the value of
-      __Secure-better-auth.session_token. Sessions last about 30 days.
     required: false
+    description: >
+      Optional. Your own Duels.ink session cookie. It unlocks your decks, ranked
+      matchmaking, private tables, friends and match history, and every request
+      is made as you. Without it the server still works anonymously for bot
+      games, the card catalog and public decks. To get it: sign in at
+      https://duels.ink, open DevTools (F12), go to Application > Cookies >
+      https://duels.ink, and copy the value of the cookie named
+      __Secure-better-auth.session_token. Sessions last about 30 days, so it
+      needs refreshing periodically.
+    placeholder: __Secure-better-auth.session_token value
+    docs_url: https://duels.ink
+    mapping:
+      env: DUELS_SESSION_COOKIE

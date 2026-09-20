@@ -56,6 +56,10 @@ async def duels_get_match_history(
         str: {"count": int, "games": [...], "next_cursor": str | null}. Game
         fields mirror what Duels.ink reports, typically including the game id,
         opponent, result and timestamp.
+    Examples:
+        - "How did my last games go?" -> call with defaults
+        - "Show the next page" -> cursor from the previous response next_cursor
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Reading match history")
@@ -130,6 +134,9 @@ async def duels_get_replay(
         ordered action/event stream. Shape is not fixed, so JSON mode is
         usually the more useful one here.
 
+    Examples:
+        - "Why did I lose that one?" -> replay_id from duels_get_match_history
+
     Error Handling:
         Returns "Error: Not found" when the id is wrong or the replay expired.
     """
@@ -173,6 +180,10 @@ async def duels_get_leaderboard(
     Returns:
         str: {"season": {...}, "your_rank": {...} | null, "count": int,
         "leaderboard": [{"rank","name","rating", ...}]}.
+    Examples:
+        - "Who is number one this season?" -> call with defaults
+        - "Where do I stand?" -> read your_rank
+
     """
     app = app_ctx(ctx)
     data = await app.client.get("/api/leaderboard", params={"limit": limit})
@@ -230,6 +241,9 @@ async def duels_get_seasons(
     Returns:
         str: {"season_results": [...], "history_stats": {...}, "meta": {...}}
         as reported by Duels.ink.
+    Examples:
+        - "How did I place last season?" -> call with defaults
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Reading season results")

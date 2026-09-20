@@ -53,6 +53,9 @@ async def duels_get_puzzle(
         str: The puzzle document - its board setup, objective and constraints,
         as Duels.ink stores it.
 
+    Examples:
+        - "Solve the puzzle at duels.ink/puzzle/abc123" -> puzzle_id='abc123'
+
     Error Handling:
         Returns "Error: Not found" for an unknown id.
     """
@@ -95,6 +98,9 @@ async def duels_list_draft_decks(
 
     Returns:
         str: {"count": int, "draft_decks": [...]}.
+    Examples:
+        - "What did I build in my last sealed?" -> call with defaults
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing draft decks")
@@ -158,6 +164,9 @@ async def duels_create_sealed(
 
     Returns:
         str: The created sealed pool as Duels.ink reports it.
+
+    Examples:
+        - "Open a sealed pool from sets 7 and 8" -> packs_config=[{'set': 7, 'count': 3}, {'set': 8, 'count': 3}]
 
     Error Handling:
         Returns "packsConfig is required and must be a non-empty array" when the
@@ -232,6 +241,10 @@ async def duels_create_playground(
 
     Returns:
         str: {"game_id": str, ...} for the sandbox game.
+
+    Examples:
+        - "Set up a board to test Shift" -> seed='shift-test-1'
+        - "Recreate this position" -> seed, then arrange it with duels_send_game_action
 
     Error Handling:
         Returns 'Missing or invalid "seed"' when the seed is empty, and a

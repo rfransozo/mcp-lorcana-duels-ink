@@ -45,6 +45,10 @@ async def duels_list_friends(
     Returns:
         str: {"count": int, "friends": [{"id","name","online","last_seen"}],
         "incoming_requests": [...], "outgoing_requests": [...]}.
+    Examples:
+        - "Who is online?" -> online_only=True
+        - "Show my friends list" -> call with defaults
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing friends")
@@ -137,6 +141,9 @@ async def duels_send_friend_request(
 
     Returns:
         str: Whatever Duels.ink reports, typically {"success": bool}.
+    Examples:
+        - "Add that player as a friend" -> user_id from a leaderboard row or match history
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Sending a friend request")
@@ -176,6 +183,9 @@ async def duels_list_pending_invites(
 
     Returns:
         str: {"incoming": [...], "outgoing": [...]} as reported by Duels.ink.
+    Examples:
+        - "Did anyone invite me to a game?" -> call with defaults
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing invites")

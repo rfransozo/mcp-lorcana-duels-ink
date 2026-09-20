@@ -183,6 +183,10 @@ async def duels_list_active_games(
         str: {"games": [...], "table": {...} | null, "activeDraftPod": {...} | null,
         "connected_game_ids": [...]} - the last being the games this server
         currently holds a live socket for.
+    Examples:
+        - "Do I have a game running?" -> call with defaults
+        - "Pick up where I left off" -> take the game_id into duels_get_game_state
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing active games")
@@ -246,6 +250,9 @@ async def duels_create_table(
     Returns:
         str: {"table_id": str, "url": str, "view": {...}} - share `url` to
         invite someone.
+    Examples:
+        - "Make a table to play with a friend" -> call with defaults, then share the url
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a table")
@@ -318,6 +325,11 @@ async def duels_configure_table(
     Returns:
         str: The table's updated view. For action='start' it also carries the
         new game_id.
+
+    Examples:
+        - "Use my Tourmaline deck here" -> action='set_deck', deck_id=...
+        - "I am ready" -> action='ready'
+        - "Start the game" -> action='start'
 
     Error Handling:
         Returns an error listing the accepted actions when `action` is unknown,
@@ -422,6 +434,10 @@ async def duels_join_matchmaking(
         "queueStartTime": ..., "gameId": str | null} - gameId appears once a
         match has been made.
 
+    Examples:
+        - "Queue for ranked with my best deck" -> queue_id='core-bo1', deck_id=...
+        - "Play a quick unranked game" -> queue_id='quick-play', deck_id=...
+
     Error Handling:
         Returns "Finish your active game before joining the queue" when a game
         is already in progress.
@@ -487,6 +503,9 @@ async def duels_leave_matchmaking(
     Returns:
         str: Whatever Duels.ink reports about leaving, typically
         {"success": bool}.
+    Examples:
+        - "Stop searching" -> call with defaults
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Leaving the queue")
@@ -536,6 +555,10 @@ async def duels_get_table(
     Returns:
         str: {"table_id": str, "status": str, "game_id": str | null,
         "view": {...}} - view holds the seats and configuration.
+    Examples:
+        - "Has anyone joined my table?" -> table_id from duels_create_table
+        - "I got this table link, what is in it?" -> table_id is the last path segment of the URL
+
     """
     app = app_ctx(ctx)
     view = await app.client.get(f"/api/table/{table_id}/view")

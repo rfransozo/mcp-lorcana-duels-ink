@@ -197,6 +197,10 @@ async def duels_get_legal_moves(
         str: {"game_id": str, "status": str, "my_turn": bool,
         "legal_moves": [{"tool": str, "why": str, "args": {...}}]}.
         An empty list means the game is over or you are not to act.
+    Examples:
+        - "What can I do right now?" -> game_id
+        - "Anything left before I end the turn?" -> game_id
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -259,6 +263,10 @@ async def duels_get_game_log(
         str: {"game_id": str, "count": int, "entries": [{"turn": int,
         "player": int, "type": str, "message": str}]}. Card placeholders in
         each message are already substituted with real card names.
+    Examples:
+        - "What did the opponent just do?" -> game_id
+        - "Recap the game so far" -> game_id, limit=100
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -344,6 +352,10 @@ async def duels_wait_for_my_turn(
 
     Returns:
         str: The same structure as duels_get_game_state, plus "timed_out": bool.
+    Examples:
+        - "Wait until it is my turn" -> game_id
+        - "Tell me when the bot has moved" -> game_id, timeout_seconds=120
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -427,6 +439,9 @@ async def duels_ink_card(
 
     Returns:
         str: The updated game state, as duels_get_game_state returns it.
+
+    Examples:
+        - "Ink the Flotsam" -> card_instance_id of that hand card from duels_get_game_state
 
     Error Handling:
         Returns "Error: Duels.ink rejected ADD_TO_INK: ..." when the card is not
@@ -514,9 +529,10 @@ async def duels_play_card(
         under pending_prompts and legal_moves points at duels_respond_to_prompt.
 
     Examples:
-        - Play a character: card_instance_id only
-        - Sing a song for free: card_instance_id + singer_instance_ids=['<char>']
-        - Shift onto a character: card_instance_id + shift_target_instance_id
+        - "Play the Flotsam" -> card_instance_id only
+        - "Sing that song with Elsa" -> card_instance_id + singer_instance_ids=['<Elsa instanceId>']
+        - "Shift the new Rapunzel onto the one on board" -> card_instance_id +
+          shift_target_instance_id='<board Rapunzel instanceId>'
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -572,6 +588,10 @@ async def duels_quest(
 
     Returns:
         str: The updated game state, with your new lore total.
+    Examples:
+        - "Quest with Elsa" -> card_instance_id of Elsa on your field
+        - "Gain as much lore as I can" -> call once per character marked canQuest
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -638,6 +658,10 @@ async def duels_challenge(
 
     Returns:
         str: The updated game state, showing the damage dealt and anything banished.
+    Examples:
+        - "Attack their exerted Pete with my Elsa" -> attacker_instance_id=<Elsa>, target_instance_id=<Pete>
+        - "Trade into their damaged character" -> compare damage and willpower in duels_get_game_state first
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -688,6 +712,10 @@ async def duels_end_turn(
     Returns:
         str: The updated game state. Follow with duels_wait_for_my_turn to block
         until the opponent has finished.
+    Examples:
+        - "End my turn" -> game_id
+        - "Pass" -> game_id
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -805,6 +833,11 @@ async def duels_respond_to_prompt(
     Returns:
         str: The updated game state. Answering one prompt often reveals the
         next one - check pending_prompts again.
+
+    Examples:
+        - "Yes, draw the card" -> choice='yes' on a boolean prompt
+        - "Skip that ability" -> choice='skip' on a select_trigger prompt
+        - "Target my Elsa" -> target_instance_ids=['<Elsa instanceId>'] on a select_target prompt
 
     Error Handling:
         Returns a message naming the prompt's type and the argument it needs
@@ -956,6 +989,11 @@ async def duels_send_game_action(
 
     Returns:
         str: The updated game state, or an error naming what Duels.ink rejected.
+    Examples:
+        - "Go first" -> action_type='CHOOSE_STARTING_PLAYER', payload={'choice': 'play'}
+        - "Keep my hand" -> action_type='MULLIGAN', payload={'selectedCardIds': []}
+        - "Move Elsa to Corona" -> action_type='MOVE_TO_LOCATION', payload={'characterInstanceId': ..., 'locationInstanceId': ...}
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -1001,6 +1039,10 @@ async def duels_concede(
 
     Returns:
         str: A confirmation, plus the final state.
+    Examples:
+        - "I give up" -> game_id
+        - "End this practice game so I can start another" -> game_id
+
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)

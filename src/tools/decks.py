@@ -92,6 +92,10 @@ async def duels_list_my_decks(
         str: {"total","count","offset","has_more","next_offset",
         "decks": [{"id","name","card_count","colors","legal_formats","valid",
         "visibility","updated_at"}]}.
+    Examples:
+        - "Which decks do I have?" -> call with defaults
+        - "Pick a deck for ranked" -> take an id from here into duels_join_matchmaking
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing your decks")
@@ -195,6 +199,10 @@ async def duels_get_deck(
         str: {"id","name","card_count","colors","legal_formats","valid","owner",
         "card_ids": [...],        # flat, one entry per copy - pass to duels_start_bot_game
         "entries": [{"definition_id","name","quantity","cost","type"}]}
+    Examples:
+        - "What is in my Tourmaline deck?" -> deck_id from duels_list_my_decks
+        - "Copy this community list" -> pass its card_ids to duels_create_deck
+
     """
     app = app_ctx(ctx)
     deck = await _fetch_deck(app, deck_id)
@@ -285,6 +293,10 @@ async def duels_create_deck(
 
     Returns:
         str: {"id","name","card_count","colors","valid", ...} for the new deck.
+    Examples:
+        - "Create an empty deck called Ramp v2" -> name='Ramp v2'
+        - "Save this list as Amber Aggro" -> name='Amber Aggro', card_ids=[...]
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a deck")
@@ -366,6 +378,10 @@ async def duels_update_deck(
     Returns:
         str: The deck's updated summary.
 
+    Examples:
+        - "Rename it to Tourmaline v3" -> deck_id, name='Tourmaline v3'
+        - "Swap two Flotsam for two Mushu" -> read duels_get_deck, edit the list, send the whole card_ids back
+
     Error Handling:
         Returns an error when neither name nor card_ids is supplied.
     """
@@ -431,6 +447,9 @@ async def duels_delete_deck(
 
     Returns:
         str: {"success": bool, "deck_id": str}.
+    Examples:
+        - "Delete the deck I just imported" -> confirm the name with duels_get_deck first, then deck_id
+
     """
     app = app_ctx(ctx)
     app.client.require_auth("Deleting a deck")
@@ -491,6 +510,10 @@ async def duels_import_decklist(
     Returns:
         str: {"deck": {...}, "imported": int, "unmatched": [str],
         "resolved": [{"line","name","definition_id","quantity"}]}.
+
+    Examples:
+        - "Import this as Ramp v2: 4 Flotsam - Slippery as an Eel ..." -> name='Ramp v2', decklist='...'
+        - "Load the list from this tournament report" -> paste the text straight into decklist
 
     Error Handling:
         Returns an error when no line could be parsed at all. A partially
