@@ -14,7 +14,8 @@ No network, no account, no games created. It finishes in under ten seconds.
 | File | Covers |
 |---|---|
 | `test_formatting.py`, `test_models.py` | Pagination envelope, markdown helpers, shared parameter constraints |
-| `test_client.py` | Cookie handling, HTTP status to actionable message, ws-token URL composition |
+| `test_client.py` | Cookie handling, HTTP status to actionable message, ws-token URL composition, SSE parsing |
+| `test_matchmaking.py` | Queue heartbeat, accepting a pairing inside its window, falling back when the stream drops |
 | `test_cards.py` | Per-set lazy loading, batch resolution, search filters |
 | `test_render.py` | Phase gates, zone filtering, move arguments, board description |
 | `test_gamews.py` | Connect, action round-trip, reconnection, registry - against a real socket |

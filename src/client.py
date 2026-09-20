@@ -9,8 +9,10 @@ live application. Two facts drive the design:
   authentication at all, so the server stays useful without a cookie.
 """
 
+import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import httpx
@@ -105,6 +107,46 @@ class DuelsClient:
     # -----------------------------------------------------------------
     # Transport
     # -----------------------------------------------------------------
+    @asynccontextmanager
+    async def stream_events(self, path: str):
+        """Open a Server-Sent Events stream and yield its `data:` payloads.
+
+        Duels.ink pushes matchmaking over SSE rather than the game WebSocket,
+        so this is the only way to hear that an opponent has been found. The
+        stream also emits `:heartbeat` comment lines, which are skipped.
+
+        Yields one decoded JSON object per event. A line that is not JSON is
+        ignored rather than raising: the stream is a notification channel, and
+        one malformed frame should not end the wait.
+        """
+        headers = {"accept": "text/event-stream"}
+        if self._cookie_header:
+            headers["cookie"] = self._cookie_header
+
+        # The stream is opened here, not inside the generator, so that leaving
+        # the `async with` closes the connection. Returning out of an
+        # `async for` does not close the generator it was iterating, which
+        # would leave the socket open until the collector got to it - and the
+        # caller returns the moment a game starts.
+        async with self._client.stream("GET", path, headers=headers, timeout=None) as response:
+            if response.status_code >= 400:
+                hint = AUTH_HELP if response.status_code == 401 else ""
+                raise DuelsError(
+                    f"Duels.ink refused the event stream {path} "
+                    f"({response.status_code}). {hint}".strip()
+                )
+
+            async def events():
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        yield json.loads(line[5:].strip())
+                    except ValueError:
+                        continue
+
+            yield events()
+
     async def request(
         self,
         method: str,

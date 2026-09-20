@@ -333,6 +333,7 @@ class TestPrompts:
         _server, text = await self._with_prompt(router, mcp_client, prompts.SELECT_CARD)
         assert text.startswith("Error:")
         assert "selected_card_ids" in text
+        assert games.HAND_SONG in text, "naming the argument is no help without the choices"
 
     async def test_optional_target_prompt_can_be_declined(self, router, mcp_client):
         """Regression from a live game: Eilonwy's Support triggered with only
@@ -358,6 +359,48 @@ class TestPrompts:
         server, text = await self._with_prompt(router, mcp_client, prompt)
         assert not text.startswith("Error:")
         assert server.received[-1]["action"]["response"]["cardInstanceIds"] == []
+
+    async def test_order_cards_answers_under_orderedCardInstanceIds(self, router, mcp_client):
+        """Regression from a live game: a scry-style prompt asking for the
+        bottom-of-deck order was answered under cardInstanceIds - the key the
+        prompt uses to *offer* the cards. Nothing came back, the prompt could
+        not be cleared, and the trigger queued behind it then refused with
+        "Cannot select trigger while another ability is resolving", wedging
+        the turn. Fifteen payload variants later, this is the one the engine
+        acknowledges."""
+        server, text = await self._with_prompt(
+            router,
+            mcp_client,
+            prompts.ORDER_CARDS,
+            selected_card_ids=[games.HAND_MUSHU, games.HAND_FLOTSAM, games.HAND_SONG],
+        )
+        assert not text.startswith("Error:")
+        assert server.received[-1]["action"]["response"] == {
+            "promptId": prompts.ORDER_CARDS["id"],
+            "type": "order_cards",
+            "orderedCardInstanceIds": [
+                games.HAND_MUSHU,
+                games.HAND_FLOTSAM,
+                games.HAND_SONG,
+            ],
+        }
+
+    async def test_order_cards_keeps_the_order_it_was_given(self, router, mcp_client):
+        """The whole point of the prompt is the sequence, so it must survive
+        the trip unsorted and unreordered."""
+        reversed_order = list(reversed(prompts.ORDER_CARDS["cardInstanceIds"]))
+        server, _ = await self._with_prompt(
+            router, mcp_client, prompts.ORDER_CARDS, selected_card_ids=reversed_order
+        )
+        response = server.received[-1]["action"]["response"]
+        assert response["orderedCardInstanceIds"] == reversed_order
+        assert "cardInstanceIds" not in response, "that key is the offer, not the answer"
+
+    async def test_order_cards_without_an_order_lists_the_cards(self, router, mcp_client):
+        _server, text = await self._with_prompt(router, mcp_client, prompts.ORDER_CARDS)
+        assert text.startswith("Error:")
+        assert "selected_card_ids" in text
+        assert games.HAND_FLOTSAM in text, "the caller cannot order cards it cannot see"
 
     async def test_wrong_argument_names_the_prompts_own_options(self, router, mcp_client):
         """The error has to be self-correcting: an agent that guessed wrong

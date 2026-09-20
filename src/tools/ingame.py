@@ -60,6 +60,7 @@ def _prompt_options(prompt: dict) -> str:
     interesting = (
         "validTargets",
         "validCards",
+        "cardInstanceIds",
         "cards",
         "options",
         "choices",
@@ -816,6 +817,7 @@ async def duels_respond_to_prompt(
       - select_trigger  -> choice='resolve' or 'skip' (+ trigger_id if several)
       - select_target   -> target_instance_ids=[...]
       - select_card     -> selected_card_ids=[...]
+      - order_cards     -> selected_card_ids=[...] in the order you want them
       - select_numeric  -> numeric_value=N
 
     Do NOT use duels_send_game_action for prompts - it takes a raw payload and
@@ -825,6 +827,7 @@ async def duels_respond_to_prompt(
     - "Yes, draw the card" -> choice='yes' on a boolean prompt
     - "Skip that ability" -> choice='skip' on a select_trigger prompt
     - "Target my Elsa" -> target_instance_ids=['<Elsa instanceId>'] on a select_target prompt
+    - "Any order is fine" -> selected_card_ids=<the prompt's cardInstanceIds> on an order_cards prompt
 
     Args:
         ctx (Context): Injected by FastMCP.
@@ -908,6 +911,23 @@ async def duels_respond_to_prompt(
         # gets no acknowledgement at all, so the game hangs on the prompt.
         response.update(
             {"type": "select_card", "cardInstanceIds": list(selected_card_ids or [])}
+        )
+
+    elif ptype == "order_cards":
+        # Cards going somewhere in an order you choose - the bottom of your
+        # deck, so far. The answer is the same ids back in the order wanted,
+        # under orderedCardInstanceIds; cardInstanceIds is what the prompt
+        # uses to *offer* them and is rejected as an answer. Getting this
+        # wrong wedges the turn: the prompt cannot be cleared, and the trigger
+        # waiting behind it refuses with "Cannot select trigger while another
+        # ability is resolving".
+        if not selected_card_ids:
+            raise DuelsError(
+                "This is an order_cards prompt - pass selected_card_ids with every "
+                "card, in the order you want them placed. " + _prompt_options(prompt)
+            )
+        response.update(
+            {"type": "order_cards", "orderedCardInstanceIds": list(selected_card_ids)}
         )
 
     elif ptype == "select_numeric":

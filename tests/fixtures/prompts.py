@@ -1,10 +1,10 @@
-"""Prompt fixtures - the three shapes captured from the live UI.
+"""Prompt fixtures - the shapes captured from the live UI.
 
 Each one was observed by watching what the real client sends back, which is how
 the nested `response.promptId` requirement was found (see docs/PROTOCOL.md).
 """
 
-from .games import FIELD_ELSA, FIELD_RAPUNZEL
+from .games import FIELD_ELSA, FIELD_RAPUNZEL, HAND_FLOTSAM, HAND_MUSHU, HAND_SONG
 
 SELECT_TRIGGER = {
     "id": "prompt-trigger-1",
@@ -70,6 +70,17 @@ SELECT_CARD = {
     # The engine lists the choices under cardInstanceIds, and expects the
     # answer under that same key - see TestPrompts.test_select_card_*.
     "cardInstanceIds": ["inst-hand-song"],
+}
+
+ORDER_CARDS = {
+    "id": "prompt-order-1",
+    "player": 1,
+    "type": "order_cards",
+    "message": "orderCardsBottomOfDeck",
+    "required": True,
+    # Offered under cardInstanceIds, like select_card - but answered under
+    # orderedCardInstanceIds. See TestPrompts.test_order_cards_*.
+    "cardInstanceIds": [HAND_FLOTSAM, HAND_SONG, HAND_MUSHU],
 }
 
 SELECT_NUMERIC = {

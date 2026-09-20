@@ -92,6 +92,36 @@ GET  /api/matchmaking/events     Server-Sent Events, carries the pairing
 POST /api/matchmaking/heartbeat  about once a second, for as long as you wait
 ```
 
+And the pairing itself has to be accepted, inside a window:
+
+```
+match_found    {matchId, expiresAt}      <- about 15 seconds to answer
+POST /api/matchmaking/accept {matchId}   -> {success, bothAccepted}
+opponent_ready -> match_accepted -> game_starting {gameId}
+```
+
+The event sequence recorded end to end, from a real queue:
+
+```
+init            {inQueue, position, pendingMatchId, pendingMatchExpiresAt, activeGameId}
+match_found     {matchId, expiresAt}
+opponent_ready  {matchId}
+match_accepted  {matchId}
+game_starting   {gameId}
+```
+
+`init` arrives on connect and carries `activeGameId` when reconnecting to a
+queue that has already produced a game - worth reading rather than waiting for
+a `game_starting` that has already been and gone. `match_cancelled` means the
+pairing fell through (usually the other side let the window lapse) and you are
+still queued, so it is not a reason to stop waiting.
+
+**There is no way to accept late.** Fifteen seconds is shorter than a round
+trip through a caller that has to be asked, so the client accepts as soon as
+`match_found` lands. A recording showed an `opponent_ready` for a pairing this
+side never answered: a person had accepted and was left waiting on a client
+that was only listening for a game that would never start.
+
 **The heartbeat is what makes the entry real.** Without it `join` still
 returns `{success, position, estimatedWait, queueId}` and calling it again
 still reports a position, but nobody is ever paired with you. This is not
@@ -122,13 +152,14 @@ while `core-bo1` is the ranked "Core BO1 - Set 13" beside it.
 | `boolean` | `boolean` | `value` (bool) |
 | `select_target` | `select_target` | `targetInstanceIds` (list) |
 | `select_card` | `select_card` | `cardInstanceIds` (list) |
+| `order_cards` | `order_cards` | `orderedCardInstanceIds` (list, ordered) |
 | `select_numeric` | `select_numeric` | `numericValue` |
 
 Prompt objects carry what is needed to answer: `select_target` has
 `validTargets`, `minSelect`, `maxSelect`, `intent`; `boolean` has `yesLabel`,
 `noLabel`, `yesDescription`, `noDescription`, `recommendedChoice`;
 `select_trigger` has `triggers[]` with `abilityName` and `abilityDescription`;
-`select_card` lists its options under `cardInstanceIds`.
+`select_card` and `order_cards` list their options under `cardInstanceIds`.
 
 A prompt with `minSelect: 0` can be declined, and sometimes must be: Support
 with no friendly character left offers only the opponent's, and accepting
@@ -144,6 +175,13 @@ only acceptance was broken.
 key belongs to `MULLIGAN`, and sending it here is simply ignored: no
 acknowledgement, no error, the prompt just stays pending until the call times
 out. Both keys look alike in the logs, so this one cost a turn to find.
+
+`order_cards` offers its cards under `cardInstanceIds` but answers under
+`orderedCardInstanceIds` - the same ids back, in the order wanted. Answering
+under `cardInstanceIds` is rejected. It took about fifteen payload variants to
+land on, and the cost of each wrong one is high: the prompt cannot be cleared,
+and anything queued behind it then refuses with "Cannot select trigger while
+another ability is resolving", which wedges the turn rather than failing it.
 
 ## Card capability flags
 

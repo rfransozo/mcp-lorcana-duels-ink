@@ -172,3 +172,76 @@ class TestVerbs:
     async def test_delete_is_routed(self, router, client):
         router.json_on("/api/decks/d1", {"success": True})
         assert await client.delete("/api/decks/d1") == {"success": True}
+
+
+class _RecordingStream(httpx.AsyncByteStream):
+    """A response body that remembers whether httpx closed it."""
+
+    def __init__(self, *chunks: bytes) -> None:
+        self.chunks = chunks
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class TestEventStream:
+    """Matchmaking is pushed over SSE, not the game WebSocket, so this is the
+    only channel that says an opponent has been found."""
+
+    SSE = (
+        b":heartbeat\n\n"
+        b'data: {"type":"init","data":{"inQueue":true}}\n\n'
+        b"event: ping\n"
+        b'data: {"type":"match_found","data":{"matchId":"m-1"}}\n\n'
+    )
+
+    def _serve(self, router, body: _RecordingStream, status: int = 200):
+        router.on(
+            "/api/matchmaking/events",
+            lambda _req: httpx.Response(status, stream=body, headers={"content-type": "text/event-stream"}),
+        )
+        return body
+
+    async def test_data_lines_are_decoded_and_the_rest_ignored(self, router, client):
+        self._serve(router, _RecordingStream(self.SSE))
+        async with client.stream_events("/api/matchmaking/events") as events:
+            seen = [event async for event in events]
+        assert [e["type"] for e in seen] == ["init", "match_found"]
+        assert seen[1]["data"]["matchId"] == "m-1"
+
+    async def test_a_malformed_frame_does_not_end_the_wait(self, router, client):
+        """One bad frame must not cost the pairing that comes after it."""
+        body = _RecordingStream(b"data: not json\n\n" + self.SSE)
+        self._serve(router, body)
+        async with client.stream_events("/api/matchmaking/events") as events:
+            seen = [event async for event in events]
+        assert [e["type"] for e in seen] == ["init", "match_found"]
+
+    async def test_leaving_early_closes_the_connection(self, router, client):
+        """The caller returns the moment a game starts. Returning out of an
+        `async for` does not close the generator it was iterating, so the
+        stream is opened by the context manager rather than inside it."""
+        body = self._serve(router, _RecordingStream(self.SSE))
+        async with client.stream_events("/api/matchmaking/events") as events:
+            async for _event in events:
+                break
+        assert body.closed, "the SSE socket was left open"
+
+    async def test_a_refused_stream_is_an_actionable_error(self, router, client):
+        self._serve(router, _RecordingStream(b""), status=401)
+        with pytest.raises(DuelsError) as exc:
+            async with client.stream_events("/api/matchmaking/events"):
+                pass
+        assert "DevTools" in str(exc.value)
+
+    async def test_the_session_cookie_is_sent(self, router, authed_client):
+        """Sent as a cookie, not a bearer token - the stream 401s otherwise."""
+        self._serve(router, _RecordingStream(self.SSE))
+        async with authed_client.stream_events("/api/matchmaking/events") as events:
+            _ = [e async for e in events]
+        assert "session_token" in router.calls[-1].headers["cookie"]
