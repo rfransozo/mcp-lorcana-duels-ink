@@ -30,19 +30,53 @@ be played, the reason why:
 The assistant never has to know Lorcana's rules. It reads the board, picks from
 `legal_moves`, and plays.
 
-## Playing without an account
+## Getting started
 
-Bot games work anonymously — no sign-in, no configuration:
+### 1. Play a game right now — no account, no setup
+
+Bot games work anonymously. Ask your assistant:
+
+> "Find a community deck and play a game of Lorcana against the bot"
+
+That is the whole setup. Under the hood it runs:
 
 ```
-"Find a community deck and play a game against the bot"
-  -> duels_browse_public_decks  (1000+ public decks, no auth)
-  -> duels_start_bot_game       (returns the opening position)
-  -> duels_get_game_state / duels_quest / duels_end_turn ...
+duels_browse_public_decks   → 1000+ community lists, no auth
+duels_start_bot_game        → returns the opening position
+duels_get_game_state        → the board, and the moves that are legal
+duels_quest / duels_play_card / duels_end_turn → play
 ```
 
-Adding a session cookie unlocks your own decks, ranked matchmaking, private
-tables, friends and match history.
+Every state comes back with a `legal_moves` list, so the assistant plays by
+picking from what the server allows rather than guessing at the rules.
+
+### 2. Connect your account — for your own decks and ranked play
+
+Optional, and only needed for anything tied to *you*: your saved decks, ranked
+matchmaking, private tables, friends and match history.
+
+Duels.ink signs in through Discord or Google and has no API keys, so the
+credential is your session cookie:
+
+1. Sign in at [duels.ink](https://duels.ink).
+2. Open DevTools — <kbd>F12</kbd>, or right-click → Inspect.
+3. Go to **Application** → **Cookies** → `https://duels.ink`.
+4. Copy the value of **`__Secure-better-auth.session_token`**.
+5. Paste it as `DUELS_SESSION_COOKIE` in your MCPize server settings.
+
+Sessions last about 30 days. When it expires, tools that need your account
+start failing with a message telling you to refresh it — run `duels_whoami` to
+confirm, then repeat the steps above.
+
+The cookie is only ever used to make requests to Duels.ink as you. Remove it at
+any time and bot games and the card catalog keep working.
+
+### 3. Check it worked
+
+> "Am I signed in to Duels.ink, and which decks do I have?"
+
+`duels_whoami` reports whether the cookie was accepted, and
+`duels_list_my_decks` lists your decks once it is.
 
 ## Tools
 
