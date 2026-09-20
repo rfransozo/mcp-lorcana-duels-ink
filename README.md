@@ -9,26 +9,38 @@ replays and the social side of the site.
 
 ## Why it works
 
-Duels.ink computes the legal moves server-side. Every game state comes back
-with an explicit list of what can be played right now — and when a card cannot
-be played, the reason why:
+Duels.ink computes legality server-side, so every state arrives with the moves
+that are actually available - and, for a card that cannot be played, the reason
+why. An assistant cannot make an illegal move.
 
 ```
+**Clock** - you 1:54 - opponent 2:00 - your clock is running
 ## Your hand
-- **Flotsam - Slippery as an Eel** (3 ink, 4/2, 1 lore, emerald) -> can: canInk, canPlay
-  `01a0bc5a-c80f-7855-b0d4-862293642cde`
-- **Education or Elimination** (4 ink, amethyst) -> blocked: Need 4 ink
-  `01a0bc5a-c80f-7855-b0d4-861e0989d27d`
-
+- **Flotsam - Slippery as an Eel** (3 ink, 4/2, 1 lore, emerald) {Evasive} -> can: canInk
+  `inst-hand-flotsam`
+  Evasive (Only characters with Evasive can challenge this character.)
+- **Education or Elimination** (4 ink, emerald) -> can: canInk, canSing
+  `inst-hand-song`
+  (A character with cost 4 or more can sing this song for free.) Choose one: draw a
+  card and chosen character of yours gets +1 strength, or banish chosen damaged character.
 ## Legal moves right now
-- Quest with this character for lore: Flotsam - Slippery as an Eel
-  `duels_quest` with `{'game_id': '...', 'card_instance_id': '...'}`
+- Quest with this character for lore: Elsa - Exploring the Unknown
+  `duels_quest` with `{'game_id': '...', 'card_instance_id': 'inst-field-elsa'}`
 - End your turn
   `duels_end_turn` with `{'game_id': '...'}`
 ```
 
-The assistant never has to know Lorcana's rules. It reads the board, picks from
-`legal_moves`, and plays.
+**Playing legally and playing well are different skills.** `legal_moves` says
+what is permitted, never what is good, and that is where games are actually
+decided. So the state carries what the decision needs: every card's rules text
+and keywords, the opponent's board and discard, and effects currently applied
+to a character. `duels_get_deck_tracker` says what is left in your deck.
+
+This is not theory. The first full game here was lost from 11-2 ahead, and the
+post-mortem found no bad decision - it found ten turns played without ever
+seeing a single card's text. Keywords decide who may even be attacked: Evasive
+can only be challenged by Evasive, Bodyguard must be challenged first, Ward
+cannot be targeted at all.
 
 ## Getting started
 
@@ -96,17 +108,26 @@ Eel") and resolves the names against the catalog, reporting anything it could
 not match rather than dropping it silently.
 
 **Matches** — `duels_start_bot_game`, `duels_create_table`, `duels_get_table`,
-`duels_configure_table`, `duels_join_matchmaking`, `duels_leave_matchmaking`,
-`duels_list_active_games`
+`duels_configure_table`, `duels_join_matchmaking`, `duels_await_match`,
+`duels_leave_matchmaking`, `duels_list_active_games`
+
+Joining a queue is not enough to be paired: the entry has to be kept alive with
+a heartbeat, and a pairing has to be accepted within about fifteen seconds.
+`duels_join_matchmaking` starts both; `duels_await_match` then blocks until an
+opponent is found. Do not re-join to poll - that sends you to the back of the
+queue.
 
 **In game** — `duels_get_game_state`, `duels_get_legal_moves`,
-`duels_get_game_log`, `duels_wait_for_my_turn`, `duels_ink_card`,
-`duels_play_card`, `duels_quest`, `duels_challenge`, `duels_end_turn`,
-`duels_respond_to_prompt`, `duels_send_game_action`, `duels_concede`
+`duels_get_deck_tracker`, `duels_get_game_log`, `duels_wait_for_my_turn`,
+`duels_ink_card`, `duels_play_card`, `duels_quest`, `duels_challenge`,
+`duels_end_turn`, `duels_respond_to_prompt`, `duels_send_game_action`,
+`duels_concede`
 
 `duels_play_card` handles songs (paid by exerting singers), Shift, and costs
 that require discarding. `duels_wait_for_my_turn` blocks on the live connection
 instead of polling, so it returns the moment the opponent finishes.
+`duels_get_deck_tracker` subtracts everything visible from your decklist to say
+what can still be drawn.
 
 **History** — `duels_get_match_history`, `duels_get_replay`,
 `duels_get_leaderboard`, `duels_get_seasons`
@@ -147,6 +168,10 @@ Every tool returns human-readable Markdown by default; pass
 Tools that change something are marked as such, and the destructive ones
 (`duels_delete_deck`, `duels_concede`) say so in their annotations so a client
 can prompt before running them.
+
+Games against people are timed - about two minutes a turn, with roughly 45
+seconds credited back on ending one - and running out loses the game. The clock
+is printed above the board. Bot games are untimed and show none.
 
 Ranked matchmaking pairs you against real people. Decide deliberately before
 letting an assistant play unattended in ranked queues.
