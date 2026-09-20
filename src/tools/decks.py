@@ -16,6 +16,52 @@ from ..toolkit import tool_errors
 # "4 Flotsam - Slippery as an Eel" / "4x Flotsam" / "4 10-71"
 DECKLIST_LINE = re.compile(r"^\s*(\d+)\s*x?\s+(.+?)\s*$")
 
+COCONUT_HELP = (
+    "Coconut ids look like 'coconut-011', and the 25 in the pool are shown at "
+    "https://duels.ink/cards/coconut."
+)
+
+CoconutCardId = Annotated[
+    Optional[str],
+    Field(
+        default=None,
+        description=(
+            "Optional Coconut card for the deck, e.g. 'coconut-011'. A Coconut is "
+            "chosen while deckbuilding: it stays in play for the whole game and is "
+            "never part of your 60, and at least one of its inks must be among the "
+            "deck's inks. Choosing one is what makes a deck legal in the Coconut "
+            "format. The pool is at https://duels.ink/cards/coconut. Omit to leave a "
+            "deck's Coconut alone; pass an empty string to remove it."
+        ),
+        max_length=40,
+    ),
+]
+
+
+def _coconut_field(value: Optional[str]) -> dict:
+    """The PATCH fragment for a Coconut choice, when one was made.
+
+    Omitting it leaves the deck's Coconut alone; an empty string clears it, which
+    the API spells as an explicit null.
+    """
+    if value is None:
+        return {}
+    return {"coconutCardId": value.strip() or None}
+
+
+async def _patch_deck(app: AppContext, deck_id: str, body: dict) -> dict:
+    """PATCH a deck, saying where the Coconut ids are when one is rejected.
+
+    `POST /api/decks` accepts a Coconut field and silently drops it - the deck
+    comes back created and without one - so every caller sets it here instead.
+    """
+    try:
+        return await app.client.request("PATCH", f"/api/decks/{deck_id}", json_body=body)
+    except DuelsError as exc:
+        if "coconut" in str(exc).lower():
+            raise DuelsError(f"{exc} {COCONUT_HELP}") from None
+        raise
+
 
 def _deck_summary(deck: dict) -> dict:
     return {
@@ -24,6 +70,7 @@ def _deck_summary(deck: dict) -> dict:
         "card_count": deck.get("cardCount"),
         "colors": deck.get("colors") or [],
         "legal_formats": deck.get("legalFormats") or [],
+        "coconut_card_id": deck.get("coconutCardId"),
         "valid": deck.get("valid"),
         "visibility": deck.get("visibility"),
         "owner": deck.get("ownerName"),
@@ -275,6 +322,7 @@ async def duels_create_deck(
             max_length=200,
         ),
     ] = None,
+    coconut_card_id: CoconutCardId = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Creates a new deck on your account and returns its id.
@@ -308,10 +356,14 @@ async def duels_create_deck(
     if not deck_id:
         raise DuelsError(f"Duels.ink did not return a deck id: {created}")
 
+    # Contents and the Coconut both go in one follow-up PATCH, because create
+    # takes neither.
+    patch: dict[str, Any] = {}
     if card_ids:
-        updated = await app.client.request(
-            "PATCH", f"/api/decks/{deck_id}", json_body={"cardIds": card_ids}
-        )
+        patch["cardIds"] = card_ids
+    patch.update(_coconut_field(coconut_card_id))
+    if patch:
+        updated = await _patch_deck(app, deck_id, patch)
         deck = (updated or {}).get("deck") or deck
 
     payload = _deck_summary(deck)
@@ -323,6 +375,7 @@ async def duels_create_deck(
                 "",
                 bullet("Id", p.get("id")),
                 bullet("Cards", p.get("card_count")),
+                *([bullet("Coconut", p["coconut_card_id"])] if p.get("coconut_card_id") else []),
                 bullet("Tournament-legal", p.get("valid")),
             ]
         )
@@ -360,6 +413,7 @@ async def duels_update_deck(
             max_length=200,
         ),
     ] = None,
+    coconut_card_id: CoconutCardId = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Renames a deck and/or replaces its card list.
@@ -388,16 +442,20 @@ async def duels_update_deck(
     """
     app = app_ctx(ctx)
     app.client.require_auth("Updating a deck")
-    if name is None and card_ids is None:
-        raise DuelsError("Pass name and/or card_ids - there is nothing to update otherwise.")
+    if name is None and card_ids is None and coconut_card_id is None:
+        raise DuelsError(
+            "Pass name, card_ids and/or coconut_card_id - there is nothing to update "
+            "otherwise."
+        )
 
     body: dict[str, Any] = {}
     if name is not None:
         body["name"] = name
     if card_ids is not None:
         body["cardIds"] = card_ids
+    body.update(_coconut_field(coconut_card_id))
 
-    updated = await app.client.request("PATCH", f"/api/decks/{deck_id}", json_body=body)
+    updated = await _patch_deck(app, deck_id, body)
     deck = (updated or {}).get("deck") or updated or {}
     payload = _deck_summary(deck)
 
@@ -408,6 +466,8 @@ async def duels_update_deck(
                 "",
                 bullet("Cards", p.get("card_count")),
                 bullet("Colors", [str(c).title() for c in p.get("colors") or []]),
+                *([bullet("Coconut", p["coconut_card_id"])] if p.get("coconut_card_id") else []),
+                bullet("Formats", p.get("legal_formats")),
                 bullet("Tournament-legal", p.get("valid")),
             ]
         )
@@ -489,6 +549,7 @@ async def duels_import_decklist(
             max_length=8000,
         ),
     ],
+    coconut_card_id: CoconutCardId = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Creates a deck from a pasted text decklist, resolving card names to catalog ids.
@@ -576,9 +637,9 @@ async def duels_import_decklist(
     deck_id = deck.get("id")
     if not deck_id:
         raise DuelsError(f"Duels.ink did not return a deck id: {created}")
-    updated = await app.client.request(
-        "PATCH", f"/api/decks/{deck_id}", json_body={"cardIds": card_ids}
-    )
+    patch: dict[str, Any] = {"cardIds": card_ids}
+    patch.update(_coconut_field(coconut_card_id))
+    updated = await _patch_deck(app, deck_id, patch)
     deck = (updated or {}).get("deck") or deck
 
     payload = {

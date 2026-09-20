@@ -6,6 +6,8 @@ nothing to update, an import that silently drops half a list, a create whose
 second request fails after the deck already exists.
 """
 
+import json
+
 import httpx
 import pytest
 
@@ -103,7 +105,9 @@ class TestUpdatingADeck:
         text = await call_text(
             authed_mcp_client, "duels_update_deck", deck_id=deck_fixtures.DECK_ID
         )
-        assert text.startswith("Error:") and "name and/or card_ids" in text
+        assert text.startswith("Error:")
+        for option in ("name", "card_ids", "coconut_card_id"):
+            assert option in text
         assert len(router.calls) == before, "nothing should have been sent"
 
     async def test_a_rename_sends_only_the_name(self, router, authed_mcp_client):
@@ -319,3 +323,153 @@ class TestOtherModes:
         )
         assert not text.startswith("Error:")
         assert any(c.url.path == "/api/playground/create-from-spec" for c in router.calls)
+
+
+class TestCoconutDecks:
+    """A Coconut is chosen at deckbuilding, stays in play all game and is never
+    in the 60; at least one of its inks has to be among the deck's.
+
+    It is what makes a deck legal in the Coconut format, and it is the one deck
+    property `POST /api/decks` quietly drops - a deck created with one comes
+    back without it - so it only ever lands on a PATCH.
+    """
+
+    COCONUT = "coconut-011"
+
+    def _routes(self, router, **deck):
+        router.json_on("/api/decks", created())
+        router.on(
+            f"/api/decks/{NEW_DECK_ID}",
+            lambda _r: httpx.Response(200, json=created(coconutCardId=self.COCONUT, **deck)),
+        )
+
+    def _patch(self, router, path):
+        return next(c for c in router.calls if c.url.path == path and c.method == "PATCH")
+
+    async def test_creating_with_one_sends_it_on_the_patch(self, router, authed_mcp_client):
+        """Create ignores it, so sending it there and stopping would leave the
+        deck silently without a Coconut."""
+        self._routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_create_deck",
+            name="T",
+            coconut_card_id=self.COCONUT,
+        )
+        assert b"coconutCardId" not in router.calls[0].content, "not on the create"
+        assert b"coconut-011" in self._patch(router, f"/api/decks/{NEW_DECK_ID}").content
+
+    async def test_a_coconut_alone_is_enough_to_trigger_the_patch(
+        self, router, authed_mcp_client
+    ):
+        """Without cards there was nothing to follow up with before."""
+        self._routes(router)
+        await call_text(
+            authed_mcp_client, "duels_create_deck", name="T", coconut_card_id=self.COCONUT
+        )
+        patch = self._patch(router, f"/api/decks/{NEW_DECK_ID}")
+        assert b"cardIds" not in patch.content
+
+    async def test_creating_without_one_sends_no_coconut_field(
+        self, router, authed_mcp_client
+    ):
+        router.json_on("/api/decks", created())
+        await call_text(authed_mcp_client, "duels_create_deck", name="T")
+        assert not any(c.method == "PATCH" for c in router.calls)
+
+    async def test_the_new_deck_reports_its_coconut(self, router, authed_mcp_client):
+        self._routes(router)
+        data = await call_json(
+            authed_mcp_client, "duels_create_deck", name="T", coconut_card_id=self.COCONUT
+        )
+        assert data["coconut_card_id"] == self.COCONUT
+
+    async def test_updating_sets_it(self, router, authed_mcp_client):
+        router.on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            lambda _r: httpx.Response(
+                200, json=created(deck_fixtures.DECK_ID, coconutCardId=self.COCONUT)
+            ),
+        )
+        text = await call_text(
+            authed_mcp_client,
+            "duels_update_deck",
+            deck_id=deck_fixtures.DECK_ID,
+            coconut_card_id=self.COCONUT,
+        )
+        assert self.COCONUT in text
+        assert b"coconut-011" in self._patch(router, f"/api/decks/{deck_fixtures.DECK_ID}").content
+
+    async def test_an_empty_string_clears_it(self, router, authed_mcp_client):
+        """The API spells removal as an explicit null, which an omitted
+        argument cannot express."""
+        router.on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            lambda _r: httpx.Response(200, json=created(deck_fixtures.DECK_ID)),
+        )
+        await call_text(
+            authed_mcp_client,
+            "duels_update_deck",
+            deck_id=deck_fixtures.DECK_ID,
+            coconut_card_id="",
+        )
+        body = json.loads(self._patch(router, f"/api/decks/{deck_fixtures.DECK_ID}").content)
+        assert "coconutCardId" in body and body["coconutCardId"] is None
+
+    async def test_omitting_it_leaves_the_deck_alone(self, router, authed_mcp_client):
+        """A rename must not wipe the Coconut the deck already had."""
+        router.on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            lambda _r: httpx.Response(200, json=created(deck_fixtures.DECK_ID, name="R")),
+        )
+        await call_text(
+            authed_mcp_client, "duels_update_deck", deck_id=deck_fixtures.DECK_ID, name="R"
+        )
+        body = json.loads(self._patch(router, f"/api/decks/{deck_fixtures.DECK_ID}").content)
+        assert "coconutCardId" not in body
+
+    async def test_importing_a_decklist_can_set_one(self, router, authed_mcp_client):
+        self._routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_import_decklist",
+            name="T",
+            decklist="4 10-71",
+            coconut_card_id=self.COCONUT,
+        )
+        patch = self._patch(router, f"/api/decks/{NEW_DECK_ID}")
+        assert b"coconut-011" in patch.content and b"cardIds" in patch.content
+
+    async def test_a_rejected_coconut_says_where_the_ids_are(
+        self, router, authed_mcp_client
+    ):
+        """'Unknown Coconut card' on its own leaves the caller guessing, and
+        the pool is not in the card catalog to be searched for."""
+        router.on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            lambda _r: httpx.Response(400, json={"error": "Unknown Coconut card"}),
+        )
+        text = await call_text(
+            authed_mcp_client,
+            "duels_update_deck",
+            deck_id=deck_fixtures.DECK_ID,
+            coconut_card_id="coconut-999",
+        )
+        assert text.startswith("Error:")
+        assert "duels.ink/cards/coconut" in text
+
+    async def test_other_deck_errors_are_not_dressed_up_as_coconut_ones(
+        self, router, authed_mcp_client
+    ):
+        router.on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            lambda _r: httpx.Response(400, json={"error": "Deck must have 60 cards"}),
+        )
+        text = await call_text(
+            authed_mcp_client,
+            "duels_update_deck",
+            deck_id=deck_fixtures.DECK_ID,
+            card_ids=["10-71"],
+        )
+        assert text.startswith("Error:")
+        assert "duels.ink/cards/coconut" not in text

@@ -107,6 +107,10 @@ rarity and format legality. No authentication required.
 Eel") and resolves the names against the catalog, reporting anything it could
 not match rather than dropping it silently.
 
+`coconut_card_id` on create, update and import chooses a deck's Coconut - a
+card that stays in play all game and is never in the 60, and what makes a deck
+legal in the Coconut format. The pool is at https://duels.ink/cards/coconut.
+
 **Matches** — `duels_start_bot_game`, `duels_create_table`, `duels_get_table`,
 `duels_configure_table`, `duels_join_matchmaking`, `duels_await_match`,
 `duels_leave_matchmaking`, `duels_list_active_games`

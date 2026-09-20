@@ -293,6 +293,38 @@ and a `data` object that `duels_get_game_log` does not surface.
 `GET /api/decks/{id}` returns `deck.cardIds` - a **flat list of 60 definitionIds**
 with repeats (plus `deckEntries` grouped by quantity).
 
+## Coconut decks
+
+A Coconut is a card chosen while deckbuilding that stays in play for the whole
+game and is never part of the 60; at least one of its inks must be among the
+deck's inks. It is the Coconut format, and it is in beta - the site says the
+pool and the wording can still change.
+
+A deck is made Coconut-legal by one field:
+
+```
+PATCH /api/decks/{id}   {"coconutCardId": "coconut-011"}
+  -> legalFormats becomes ["Coconut"], valid true
+```
+
+Three things about it are not guessable:
+
+* **`POST /api/decks` accepts the field and drops it.** The deck comes back
+  created, 201, with `coconutCardId: null`. It only takes on a PATCH, so
+  creating a Coconut deck is always two requests.
+* **Clearing is an explicit `null`**, which turns the deck back into
+  `InfinityConstructed` - and invalid, if it has three inks, which Coconut
+  decks generally do.
+* **An unknown id is `400 {"error": "Unknown Coconut card"}`**, and the pool is
+  not in `/api/cards`: `?type=coconut` returns nothing. The 25 ids run
+  `coconut-001` to `coconut-025`, are rendered into `/cards/coconut` rather
+  than served as JSON, and their art is at
+  `cards.duels.ink/lorcana/en/coconut/`. There is no endpoint that lists them.
+
+`/api/custom-cards/access` and `/api/cards/alpha-access` both report
+`hasAccess: false` on an ordinary account and gate neither of these - Coconut
+is not a permission.
+
 ## Card catalog
 
 `GET /api/cards?limit=100&offset=N` is public, ~3,178 cards, and supports `q`
