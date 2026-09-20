@@ -1,0 +1,32 @@
+version: 1
+name: mcp-lorcana-duels-ink
+runtime: python
+entry: src/server.py
+description: >
+  Play Disney Lorcana on Duels.ink. Run matches against the bot or ranked
+  opponents, manage decks, search the full card catalog, and review stats
+  and replays.
+tags:
+  - lorcana
+  - disney-lorcana
+  - trading-card-game
+  - tcg
+  - card-game
+  - deckbuilding
+  - gaming
+  - duels-ink
+build:
+  install: pip install -r requirements.txt
+startCommand:
+  type: http
+  command: python src/server.py
+user_secrets:
+  - name: DUELS_SESSION_COOKIE
+    description: >
+      Optional. Your Duels.ink session cookie, which unlocks your own decks,
+      ranked matchmaking, private tables, friends and match history. Without it
+      the server still works anonymously for bot games, the card catalog and
+      public decks. To get it: sign in at https://duels.ink, open DevTools (F12),
+      go to Application > Cookies > https://duels.ink, and copy the value of
+      __Secure-better-auth.session_token. Sessions last about 30 days.
+    required: false

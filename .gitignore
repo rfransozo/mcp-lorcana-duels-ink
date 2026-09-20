@@ -1,0 +1,18 @@
+# Ambiente
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+
+# Conteudo privado do projeto
+PRICING.md
+MARKETPLACE.md
+.mcpize/
+
+# Windows
+desktop.ini
+Thumbs.db
+.pytest_cache/
+.coverage
+htmlcov/

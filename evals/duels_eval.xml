@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Evaluation set for mcp-lorcana-duels-ink.
+
+  Every question is read-only, independent of the others, and answerable only by
+  using the server's tools. Answers are drawn from the printed Lorcana card
+  catalog, so they do not drift as the site's player data changes.
+
+  Answers verified against the live Duels.ink catalog at build caee107.
+-->
+<evaluation>
+
+  <qa_pair>
+    <question>In the Duels.ink card catalog, look up the card whose id is 10-71. Subtract its willpower from its strength. What number do you get?</question>
+    <answer>2</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Two Lorcana cards have the catalog ids 10-45 and 13-80. Add their ink costs together. What is the total?</question>
+    <answer>7</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>According to the Duels.ink card catalog, how many cards belong to Lorcana set 13?</question>
+    <answer>261</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Search the Duels.ink card catalog for the term "Diablo". How many cards match in total?</question>
+    <answer>15</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>A decklist refers to a card only by the id 12-133. It is a 1-cost Ruby action. What is that card's full name, including its version after the dash?</question>
+    <answer>Dangerous Plan</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Find the Duels.ink card with id 11-97. It is a Song. What is its rarity?</question>
+    <answer>uncommon</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Two characters in the Duels.ink catalog have the ids 10-45 and 5-195. Which of the two has the higher strength? Give that card's full name exactly as the catalog lists it.</question>
+    <answer>Pete - Games Referee</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Look up the Lorcana character "Rapunzel - Tower Defender" in the Duels.ink catalog. Report its strength and willpower in the form strength/willpower.</question>
+    <answer>3/3</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Search the Duels.ink card catalog for "Mushu". How many cards match in total?</question>
+    <answer>9</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>The character with catalog id 10-71 has the Evasive keyword. Which single ink colour is it?</question>
+    <answer>emerald</answer>
+  </qa_pair>
+
+</evaluation>

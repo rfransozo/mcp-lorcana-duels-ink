@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "mcp-lorcana-duels-ink"
+version = "1.0.0"
+description = "Play and manage Disney Lorcana on Duels.ink - matches, decks, cards, stats and replays."
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "websockets>=12",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5",
+]
+
+# ⚠️  Dev-only. requirements.txt continua com as 5 deps de runtime porque
+#     é ele que o MCPize instala no build da Cloud Run.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = [
+    "live: hits the real duels.ink site (read-only, anonymous); deselected by default",
+]

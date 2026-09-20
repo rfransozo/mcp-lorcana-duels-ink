@@ -1,0 +1,196 @@
+"""Card catalog fixtures.
+
+These are real cards, with values verified against the live Duels.ink catalog
+(the same ones the eval set uses). Writing them by hand rather than recording
+traffic keeps the suite deterministic and the fixtures readable.
+"""
+
+CARDS: list[dict] = [
+    {
+        "id": "10-71",
+        "fullId": "71/204 EN 10",
+        "name": "Flotsam",
+        "title": "Slippery as an Eel",
+        "fullName": "Flotsam - Slippery as an Eel",
+        "slug": "flotsam-slippery-as-an-eel",
+        "type": "character",
+        "colors": ["emerald"],
+        "cost": 3,
+        "inkable": True,
+        "rarity": "common",
+        "legality": ["core", "infinity"],
+        "strength": 4,
+        "willpower": 2,
+        "lore": 1,
+        "subtypes": ["Storyborn", "Ally"],
+        "rulesText": "Evasive (Only characters with Evasive can challenge this character.)",
+        "flavorText": '"You\'re in our world now."',
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-71.webp",
+    },
+    {
+        "id": "11-97",
+        "fullId": "97/204 EN 11",
+        "name": "Education or Elimination",
+        "title": "",
+        "fullName": "Education or Elimination",
+        "slug": "education-or-elimination",
+        "type": "action",
+        "colors": ["emerald"],
+        "cost": 4,
+        "inkable": True,
+        "rarity": "uncommon",
+        "legality": ["core", "infinity"],
+        "subtypes": ["Song"],
+        "rulesText": (
+            "(A character with cost 4 or more can sing this song for free.) "
+            "Choose one: draw a card and chosen character of yours gets +1 strength, "
+            "or banish chosen damaged character."
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/11-97.webp",
+    },
+    {
+        "id": "12-133",
+        "fullId": "133/204 EN 12",
+        "name": "Dangerous Plan",
+        "title": "",
+        "fullName": "Dangerous Plan",
+        "slug": "dangerous-plan",
+        "type": "action",
+        "colors": ["ruby"],
+        "cost": 1,
+        "inkable": True,
+        "rarity": "common",
+        "legality": ["core", "infinity"],
+        "subtypes": [],
+        "rulesText": "Chosen character gets +2 strength this turn.",
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/12-133.webp",
+    },
+    {
+        "id": "10-45",
+        "fullId": "45/204 EN 10",
+        "name": "Elsa",
+        "title": "Exploring the Unknown",
+        "fullName": "Elsa - Exploring the Unknown",
+        "slug": "elsa-exploring-the-unknown",
+        "type": "character",
+        "colors": ["amethyst"],
+        "cost": 3,
+        "inkable": True,
+        "rarity": "common",
+        "legality": ["core", "infinity"],
+        "strength": 1,
+        "willpower": 3,
+        "lore": 1,
+        "subtypes": ["Dreamborn", "Hero", "Queen", "Sorcerer"],
+        "rulesText": "CLOSER LOOK When you play this character, you may draw a card.",
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-45.webp",
+    },
+    {
+        "id": "13-80",
+        "fullId": "80/204 EN 13",
+        "name": "Rapunzel",
+        "title": "Tower Defender",
+        "fullName": "Rapunzel - Tower Defender",
+        "slug": "rapunzel-tower-defender",
+        "type": "character",
+        "colors": ["emerald"],
+        "cost": 4,
+        "inkable": True,
+        "rarity": "common",
+        "legality": ["core", "infinity"],
+        "strength": 3,
+        "willpower": 3,
+        "lore": 1,
+        "subtypes": ["Storyborn", "Hero", "Princess"],
+        "rulesText": (
+            "THE FATES' DESIGN When you play this character, you may choose and discard "
+            "a card. If you do, return chosen character to their player's hand."
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/13-80.webp",
+    },
+    {
+        "id": "5-195",
+        "fullId": "195/204 EN 5",
+        "name": "Pete",
+        "title": "Games Referee",
+        "fullName": "Pete - Games Referee",
+        "slug": "pete-games-referee",
+        "type": "character",
+        "colors": ["steel"],
+        "cost": 3,
+        "inkable": True,
+        "rarity": "uncommon",
+        "legality": ["core", "infinity"],
+        "strength": 3,
+        "willpower": 3,
+        "lore": 1,
+        "subtypes": ["Dreamborn", "Villain"],
+        "rulesText": (
+            "BLOW THE WHISTLE Opponents can't play actions until the start of your next turn."
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/5-195.webp",
+    },
+    {
+        "id": "10-103",
+        "fullId": "103/204 EN 10",
+        "name": "Mushu",
+        "title": "Stealthy Dragon",
+        "fullName": "Mushu - Stealthy Dragon",
+        "slug": "mushu-stealthy-dragon",
+        "type": "character",
+        "colors": ["ruby"],
+        "cost": 5,
+        "inkable": False,
+        "rarity": "rare",
+        "legality": ["core", "infinity"],
+        "strength": 4,
+        "willpower": 4,
+        "lore": 2,
+        "subtypes": ["Storyborn", "Ally"],
+        "rulesText": "Rush (This character can challenge the turn they're played.)",
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-103.webp",
+    },
+    {
+        # A location, so the location/item zone is covered too.
+        "id": "13-12",
+        "fullId": "12/204 EN 13",
+        "name": "Corona",
+        "title": "Sunlit Kingdom",
+        "fullName": "Corona - Sunlit Kingdom",
+        "slug": "corona-sunlit-kingdom",
+        "type": "location",
+        "colors": ["amber"],
+        "cost": 3,
+        "inkable": True,
+        "rarity": "rare",
+        "legality": ["core", "infinity"],
+        "willpower": 6,
+        "lore": 1,
+        "moveCost": 1,
+        "subtypes": [],
+        "rulesText": "Characters gain Ward while here.",
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/13-12.webp",
+    },
+]
+
+BY_ID: dict[str, dict] = {c["id"]: c for c in CARDS}
+
+
+def page(cards: list[dict], limit: int, offset: int, total: int | None = None) -> dict:
+    """Build the /api/cards envelope exactly as the site returns it."""
+    total = len(cards) if total is None else total
+    window = cards[offset : offset + limit]
+    return {
+        "meta": {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "hasMore": total > offset + len(window),
+        },
+        "cards": window,
+    }
+
+
+def cards_in_set(set_number: int) -> list[dict]:
+    """Every fixture card belonging to one set."""
+    return [c for c in CARDS if c["id"].split("-", 1)[0] == str(set_number)]
