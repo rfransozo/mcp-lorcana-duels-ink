@@ -878,15 +878,21 @@ async def duels_respond_to_prompt(
         response.update({"type": "boolean", "value": normalised in ("yes", "true")})
 
     elif ptype == "select_target":
-        if not target_instance_ids:
+        # minSelect 0 means the prompt can be declined, and declining is
+        # sometimes the only sane answer: Support with no friendly target left
+        # offers only the opponent's characters, and taking it buffs them.
+        # An empty list is how the engine is told "no thanks".
+        if not target_instance_ids and prompt.get("minSelect"):
             raise DuelsError(
                 "This is a select_target prompt - pass target_instance_ids. "
                 + _prompt_options(prompt)
             )
-        response.update({"type": "select_target", "targetInstanceIds": target_instance_ids})
+        response.update(
+            {"type": "select_target", "targetInstanceIds": list(target_instance_ids or [])}
+        )
 
     elif ptype == "select_card":
-        if not selected_card_ids:
+        if not selected_card_ids and prompt.get("minSelect"):
             raise DuelsError(
                 "This is a select_card prompt - pass selected_card_ids. "
                 + _prompt_options(prompt)
@@ -894,7 +900,9 @@ async def duels_respond_to_prompt(
         # The wire key is cardInstanceIds, which is also how the prompt lists
         # its own options. Sending selectedCardIds - the key MULLIGAN uses -
         # gets no acknowledgement at all, so the game hangs on the prompt.
-        response.update({"type": "select_card", "cardInstanceIds": selected_card_ids})
+        response.update(
+            {"type": "select_card", "cardInstanceIds": list(selected_card_ids or [])}
+        )
 
     elif ptype == "select_numeric":
         if numeric_value is None:

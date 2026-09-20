@@ -323,6 +323,31 @@ class TestPrompts:
         assert text.startswith("Error:")
         assert "selected_card_ids" in text
 
+    async def test_optional_target_prompt_can_be_declined(self, router, mcp_client):
+        """Regression from a live game: Eilonwy's Support triggered with only
+        the opponent's character as a legal target, so the only good answer
+        was none at all. The prompt said minSelect 0 and the tool still
+        refused, printing that very 0 back in the error."""
+        prompt = {**prompts.SELECT_TARGET, "minSelect": 0, "required": False}
+        server, text = await self._with_prompt(router, mcp_client, prompt)
+        assert not text.startswith("Error:")
+        assert server.received[-1]["action"]["response"] == {
+            "promptId": prompt["id"],
+            "type": "select_target",
+            "targetInstanceIds": [],
+        }
+
+    async def test_mandatory_target_prompt_still_requires_a_target(self, router, mcp_client):
+        _server, text = await self._with_prompt(router, mcp_client, prompts.SELECT_TARGET)
+        assert text.startswith("Error:")
+        assert "target_instance_ids" in text
+
+    async def test_optional_card_prompt_can_be_declined(self, router, mcp_client):
+        prompt = {**prompts.SELECT_CARD, "minSelect": 0, "required": False}
+        server, text = await self._with_prompt(router, mcp_client, prompt)
+        assert not text.startswith("Error:")
+        assert server.received[-1]["action"]["response"]["cardInstanceIds"] == []
+
     async def test_wrong_argument_names_the_prompts_own_options(self, router, mcp_client):
         """The error has to be self-correcting: an agent that guessed wrong
         needs to see what this prompt actually offers."""

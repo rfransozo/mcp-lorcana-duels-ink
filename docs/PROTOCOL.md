@@ -105,6 +105,15 @@ Prompt objects carry what is needed to answer: `select_target` has
 `select_trigger` has `triggers[]` with `abilityName` and `abilityDescription`;
 `select_card` lists its options under `cardInstanceIds`.
 
+A prompt with `minSelect: 0` can be declined, and sometimes must be: Support
+with no friendly character left offers only the opponent's, and accepting
+buffs them. Declining is an empty `targetInstanceIds` / `cardInstanceIds`.
+
+Still unresolved: answering an **optional** `select_trigger` with
+`resolve_trigger` was rejected as "Invalid prompt response" in a live game,
+while `skip_trigger` worked. Only one observation so far, so the accept verb
+for optional triggers is not yet confirmed.
+
 `select_card` answers under `cardInstanceIds`, **not** `selectedCardIds` - that
 key belongs to `MULLIGAN`, and sending it here is simply ignored: no
 acknowledgement, no error, the prompt just stays pending until the call times
