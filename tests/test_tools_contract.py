@@ -198,21 +198,33 @@ class TestDocstrings:
         missing = [name for name, doc in docs.items() if "Args:" not in doc]
         assert missing == []
 
-    def test_every_tool_shows_a_worked_example(self):
-        """An agent adopts a tool faster from one concrete call than from a
-        paragraph of prose. Flagged in the MCPize quality review."""
-        docs = source_docstrings()
-        missing = [name for name, doc in docs.items() if "Examples:" not in doc]
+    async def test_every_tool_shows_a_worked_example(self, tools):
+        """Asserted on the EXPOSED description, not the source docstring.
+
+        FastMCP hands the docstring to griffe, and an indented block under
+        `Examples:` is parsed as a section and dropped from the description the
+        agent actually receives. A source-only check passes while every example
+        silently fails to ship - which is exactly what happened the first time
+        this was fixed after the MCPize quality review.
+        """
+        missing = [t.name for t in tools if "Examples:" not in (t.description or "")]
         assert missing == []
 
-    def test_examples_show_an_actual_invocation(self):
+    async def test_examples_show_an_actual_invocation(self, tools):
         """An Examples block that only restates the description is not one."""
-        thin = []
-        for name, doc in source_docstrings().items():
-            block = doc.split("Examples:", 1)[1].split("Error Handling:")[0]
-            if "->" not in block:
-                thin.append(name)
+        thin = [
+            t.name
+            for t in tools
+            if "->" not in (t.description or "").split("Examples:", 1)[-1]
+        ]
         assert thin == []
+
+    async def test_examples_sit_before_the_args_section(self, tools):
+        """Placement is what keeps them in the description: after Args they are
+        swallowed by the section parser."""
+        for t in tools:
+            body = t.description or ""
+            assert "Args:" not in body, f"{t.name}: Args leaked into the description"
 
     def test_source_docstrings_cover_every_exposed_tool(self):
         """Guards the AST lookup itself: a renamed module would otherwise make

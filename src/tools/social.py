@@ -37,6 +37,10 @@ async def duels_list_friends(
 
     Do NOT use for game invitations - those are in duels_list_pending_invites.
 
+    Examples:
+    - "Who is online?" -> online_only=True
+    - "Show my friends list" -> call with defaults
+
     Args:
         ctx (Context): Injected by FastMCP.
         online_only (bool): Filter to friends currently online. Default False.
@@ -45,10 +49,6 @@ async def duels_list_friends(
     Returns:
         str: {"count": int, "friends": [{"id","name","online","last_seen"}],
         "incoming_requests": [...], "outgoing_requests": [...]}.
-    Examples:
-        - "Who is online?" -> online_only=True
-        - "Show my friends list" -> call with defaults
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing friends")
@@ -134,6 +134,9 @@ async def duels_send_friend_request(
     Do NOT use it to invite someone to a game - share the link from
     duels_create_table instead.
 
+    Examples:
+    - "Add that player as a friend" -> user_id from a leaderboard row or match history
+
     Args:
         ctx (Context): Injected by FastMCP.
         user_id (str): The recipient's Duels.ink user id.
@@ -141,9 +144,6 @@ async def duels_send_friend_request(
 
     Returns:
         str: Whatever Duels.ink reports, typically {"success": bool}.
-    Examples:
-        - "Add that player as a friend" -> user_id from a leaderboard row or match history
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Sending a friend request")
@@ -177,15 +177,15 @@ async def duels_list_pending_invites(
 
     Do NOT use for friend requests - those are in duels_list_friends.
 
+    Examples:
+    - "Did anyone invite me to a game?" -> call with defaults
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
         str: {"incoming": [...], "outgoing": [...]} as reported by Duels.ink.
-    Examples:
-        - "Did anyone invite me to a game?" -> call with defaults
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing invites")

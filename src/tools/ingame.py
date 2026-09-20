@@ -131,6 +131,11 @@ async def duels_get_game_state(
     without the board. Do NOT call this in a tight loop while waiting for the
     opponent - use duels_wait_for_my_turn, which blocks efficiently.
 
+    Examples:
+    - "What's the board?" -> call with the game_id
+    - "What can I do?" -> read legal_moves
+    - "Why can't I play this card?" -> read the card's "blocked" field
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -154,10 +159,6 @@ async def duels_get_game_state(
             "winner": int, "i_won": bool    # once the game is over
         }
 
-    Examples:
-        - "What's the board?" -> call with the game_id
-        - "What can I do?" -> read legal_moves
-        - "Why can't I play this card?" -> read the card's "blocked" field
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -188,6 +189,10 @@ async def duels_get_legal_moves(
     Do NOT use it as your main read: duels_get_game_state returns this same
     list plus the board, for roughly the same cost.
 
+    Examples:
+    - "What can I do right now?" -> game_id
+    - "Anything left before I end the turn?" -> game_id
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -197,10 +202,6 @@ async def duels_get_legal_moves(
         str: {"game_id": str, "status": str, "my_turn": bool,
         "legal_moves": [{"tool": str, "why": str, "args": {...}}]}.
         An empty list means the game is over or you are not to act.
-    Examples:
-        - "What can I do right now?" -> game_id
-        - "Anything left before I end the turn?" -> game_id
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -253,6 +254,10 @@ async def duels_get_game_log(
     duels_get_game_state for that. The log only covers the current connection;
     for a finished game use duels_get_replay.
 
+    Examples:
+    - "What did the opponent just do?" -> game_id
+    - "Recap the game so far" -> game_id, limit=100
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -263,10 +268,6 @@ async def duels_get_game_log(
         str: {"game_id": str, "count": int, "entries": [{"turn": int,
         "player": int, "type": str, "message": str}]}. Card placeholders in
         each message are already substituted with real card names.
-    Examples:
-        - "What did the opponent just do?" -> game_id
-        - "Recap the game so far" -> game_id, limit=100
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -344,6 +345,10 @@ async def duels_wait_for_my_turn(
     duels_get_game_state is the clearer call. Do NOT wrap it in a retry loop
     with a short timeout; give it a long one instead.
 
+    Examples:
+    - "Wait until it is my turn" -> game_id
+    - "Tell me when the bot has moved" -> game_id, timeout_seconds=120
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -352,10 +357,6 @@ async def duels_wait_for_my_turn(
 
     Returns:
         str: The same structure as duels_get_game_state, plus "timed_out": bool.
-    Examples:
-        - "Wait until it is my turn" -> game_id
-        - "Tell me when the bot has moved" -> game_id, timeout_seconds=120
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -431,6 +432,9 @@ async def duels_ink_card(
     Do NOT use this to play a card onto the board - that is duels_play_card.
     Inking is permanent for the game: the card is spent as a resource.
 
+    Examples:
+    - "Ink the Flotsam" -> card_instance_id of that hand card from duels_get_game_state
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -439,9 +443,6 @@ async def duels_ink_card(
 
     Returns:
         str: The updated game state, as duels_get_game_state returns it.
-
-    Examples:
-        - "Ink the Flotsam" -> card_instance_id of that hand card from duels_get_game_state
 
     Error Handling:
         Returns "Error: Duels.ink rejected ADD_TO_INK: ..." when the card is not
@@ -514,6 +515,12 @@ async def duels_play_card(
     Do NOT use this to put a card into the inkwell (duels_ink_card) or to quest
     with a character already on the board (duels_quest).
 
+    Examples:
+    - "Play the Flotsam" -> card_instance_id only
+    - "Sing that song with Elsa" -> card_instance_id + singer_instance_ids=['<Elsa instanceId>']
+    - "Shift the new Rapunzel onto the one on board" -> card_instance_id +
+    shift_target_instance_id='<board Rapunzel instanceId>'
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -528,11 +535,6 @@ async def duels_play_card(
         str: The updated game state. If a decision is now required, it appears
         under pending_prompts and legal_moves points at duels_respond_to_prompt.
 
-    Examples:
-        - "Play the Flotsam" -> card_instance_id only
-        - "Sing that song with Elsa" -> card_instance_id + singer_instance_ids=['<Elsa instanceId>']
-        - "Shift the new Rapunzel onto the one on board" -> card_instance_id +
-          shift_target_instance_id='<board Rapunzel instanceId>'
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -579,6 +581,10 @@ async def duels_quest(
     An exerted character cannot be used again this turn, and exerted characters
     can be challenged by the opponent.
 
+    Examples:
+    - "Quest with Elsa" -> card_instance_id of Elsa on your field
+    - "Gain as much lore as I can" -> call once per character marked canQuest
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -588,10 +594,6 @@ async def duels_quest(
 
     Returns:
         str: The updated game state, with your new lore total.
-    Examples:
-        - "Quest with Elsa" -> card_instance_id of Elsa on your field
-        - "Gain as much lore as I can" -> call once per character marked canQuest
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -649,6 +651,10 @@ async def duels_challenge(
     characters must be challenged first - the server enforces both and will
     reject an illegal challenge.
 
+    Examples:
+    - "Attack their exerted Pete with my Elsa" -> attacker_instance_id=<Elsa>, target_instance_id=<Pete>
+    - "Trade into their damaged character" -> compare damage and willpower in duels_get_game_state first
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -658,10 +664,6 @@ async def duels_challenge(
 
     Returns:
         str: The updated game state, showing the damage dealt and anything banished.
-    Examples:
-        - "Attack their exerted Pete with my Elsa" -> attacker_instance_id=<Elsa>, target_instance_id=<Pete>
-        - "Trade into their damaged character" -> compare damage and willpower in duels_get_game_state first
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -704,6 +706,10 @@ async def duels_end_turn(
     Do NOT use this to leave or lose a game - that is duels_concede. Ending a
     turn is a normal move and hands play to the opponent.
 
+    Examples:
+    - "End my turn" -> game_id
+    - "Pass" -> game_id
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -712,10 +718,6 @@ async def duels_end_turn(
     Returns:
         str: The updated game state. Follow with duels_wait_for_my_turn to block
         until the opponent has finished.
-    Examples:
-        - "End my turn" -> game_id
-        - "Pass" -> game_id
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -819,6 +821,11 @@ async def duels_respond_to_prompt(
     Do NOT use duels_send_game_action for prompts - it takes a raw payload and
     is easy to get wrong; this tool builds the correct one for you.
 
+    Examples:
+    - "Yes, draw the card" -> choice='yes' on a boolean prompt
+    - "Skip that ability" -> choice='skip' on a select_trigger prompt
+    - "Target my Elsa" -> target_instance_ids=['<Elsa instanceId>'] on a select_target prompt
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -833,11 +840,6 @@ async def duels_respond_to_prompt(
     Returns:
         str: The updated game state. Answering one prompt often reveals the
         next one - check pending_prompts again.
-
-    Examples:
-        - "Yes, draw the card" -> choice='yes' on a boolean prompt
-        - "Skip that ability" -> choice='skip' on a select_trigger prompt
-        - "Target my Elsa" -> target_instance_ids=['<Elsa instanceId>'] on a select_target prompt
 
     Error Handling:
         Returns a message naming the prompt's type and the argument it needs
@@ -980,6 +982,11 @@ async def duels_send_game_action(
     correctly) or for the common moves above - a malformed payload here is
     rejected by the server, and some action types end the game.
 
+    Examples:
+    - "Go first" -> action_type='CHOOSE_STARTING_PLAYER', payload={'choice': 'play'}
+    - "Keep my hand" -> action_type='MULLIGAN', payload={'selectedCardIds': []}
+    - "Move Elsa to Corona" -> action_type='MOVE_TO_LOCATION', payload={'characterInstanceId': ..., 'locationInstanceId': ...}
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -989,11 +996,6 @@ async def duels_send_game_action(
 
     Returns:
         str: The updated game state, or an error naming what Duels.ink rejected.
-    Examples:
-        - "Go first" -> action_type='CHOOSE_STARTING_PLAYER', payload={'choice': 'play'}
-        - "Keep my hand" -> action_type='MULLIGAN', payload={'selectedCardIds': []}
-        - "Move Elsa to Corona" -> action_type='MOVE_TO_LOCATION', payload={'characterInstanceId': ..., 'locationInstanceId': ...}
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
@@ -1032,6 +1034,10 @@ async def duels_concede(
     hopeless. Do NOT use it to step away temporarily - the game stays available
     and duels_list_active_games will find it again.
 
+    Examples:
+    - "I give up" -> game_id
+    - "End this practice game so I can start another" -> game_id
+
     Args:
         ctx (Context): Injected by FastMCP.
         game_id (str): Game UUID.
@@ -1039,10 +1045,6 @@ async def duels_concede(
 
     Returns:
         str: A confirmation, plus the final state.
-    Examples:
-        - "I give up" -> game_id
-        - "End this practice game so I can start another" -> game_id
-
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)

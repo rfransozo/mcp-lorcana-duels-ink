@@ -85,6 +85,10 @@ async def duels_start_bot_game(
     Do NOT use this for ranked play (duels_join_matchmaking) or to play a
     friend (duels_create_table).
 
+    Examples:
+    - "Play a bot game with my Tourmaline deck" -> deck_id from duels_list_my_decks
+    - "Play a quick game, no account" -> deck_id of any public deck
+
     Args:
         ctx (Context): Injected by FastMCP.
         deck_id (Optional[str]): A saved or public deck id.
@@ -95,10 +99,6 @@ async def duels_start_bot_game(
     Returns:
         str: {"game_id": str, "already_running": bool, "state": {...}} where
         state is the same structure duels_get_game_state returns.
-
-    Examples:
-        - "Play a bot game with my Tourmaline deck" -> deck_id from duels_list_my_decks
-        - "Play a quick game, no account" -> deck_id of any public deck
 
     Error Handling:
         Returns an error naming the missing argument when neither deck_id nor
@@ -175,6 +175,10 @@ async def duels_list_active_games(
 
     Do NOT use for finished games - those are in duels_get_match_history.
 
+    Examples:
+    - "Do I have a game running?" -> call with defaults
+    - "Pick up where I left off" -> take the game_id into duels_get_game_state
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
@@ -183,10 +187,6 @@ async def duels_list_active_games(
         str: {"games": [...], "table": {...} | null, "activeDraftPod": {...} | null,
         "connected_game_ids": [...]} - the last being the games this server
         currently holds a live socket for.
-    Examples:
-        - "Do I have a game running?" -> call with defaults
-        - "Pick up where I left off" -> take the game_id into duels_get_game_state
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing active games")
@@ -243,6 +243,9 @@ async def duels_create_table(
     Do NOT use this for a quick solo practice game (duels_start_bot_game is one
     call) or for ranked play (duels_join_matchmaking).
 
+    Examples:
+    - "Make a table to play with a friend" -> call with defaults, then share the url
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
@@ -250,9 +253,6 @@ async def duels_create_table(
     Returns:
         str: {"table_id": str, "url": str, "view": {...}} - share `url` to
         invite someone.
-    Examples:
-        - "Make a table to play with a friend" -> call with defaults, then share the url
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a table")
@@ -315,6 +315,11 @@ async def duels_configure_table(
     Do NOT use this on a game that has already started - table actions only
     apply to the lobby.
 
+    Examples:
+    - "Use my Tourmaline deck here" -> action='set_deck', deck_id=...
+    - "I am ready" -> action='ready'
+    - "Start the game" -> action='start'
+
     Args:
         ctx (Context): Injected by FastMCP.
         table_id (str): Table UUID from duels_create_table.
@@ -325,11 +330,6 @@ async def duels_configure_table(
     Returns:
         str: The table's updated view. For action='start' it also carries the
         new game_id.
-
-    Examples:
-        - "Use my Tourmaline deck here" -> action='set_deck', deck_id=...
-        - "I am ready" -> action='ready'
-        - "Start the game" -> action='start'
 
     Error Handling:
         Returns an error listing the accepted actions when `action` is unknown,
@@ -422,6 +422,10 @@ async def duels_join_matchmaking(
     Do NOT use for practice (duels_start_bot_game) or for a private game with a
     friend (duels_create_table).
 
+    Examples:
+    - "Queue for ranked with my best deck" -> queue_id='core-bo1', deck_id=...
+    - "Play a quick unranked game" -> queue_id='quick-play', deck_id=...
+
     Args:
         ctx (Context): Injected by FastMCP.
         queue_id (str): The queue to join.
@@ -433,10 +437,6 @@ async def duels_join_matchmaking(
         str: {"status": str, "position": int, "estimatedWait": int,
         "queueStartTime": ..., "gameId": str | null} - gameId appears once a
         match has been made.
-
-    Examples:
-        - "Queue for ranked with my best deck" -> queue_id='core-bo1', deck_id=...
-        - "Play a quick unranked game" -> queue_id='quick-play', deck_id=...
 
     Error Handling:
         Returns "Finish your active game before joining the queue" when a game
@@ -496,6 +496,9 @@ async def duels_leave_matchmaking(
     only way out is duels_concede, which counts as a loss. Leaving the queue
     has no such penalty.
 
+    Examples:
+    - "Stop searching" -> call with defaults
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
@@ -503,9 +506,6 @@ async def duels_leave_matchmaking(
     Returns:
         str: Whatever Duels.ink reports about leaving, typically
         {"success": bool}.
-    Examples:
-        - "Stop searching" -> call with defaults
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Leaving the queue")
@@ -546,6 +546,10 @@ async def duels_get_table(
     with the game_id it reports. Do NOT use it for bot practice, which needs no
     table at all (duels_start_bot_game).
 
+    Examples:
+    - "Has anyone joined my table?" -> table_id from duels_create_table
+    - "I got this table link, what is in it?" -> table_id is the last path segment of the URL
+
     Args:
         ctx (Context): Injected by FastMCP.
         table_id (str): Table UUID, from duels_create_table or an invite link
@@ -555,10 +559,6 @@ async def duels_get_table(
     Returns:
         str: {"table_id": str, "status": str, "game_id": str | null,
         "view": {...}} - view holds the seats and configuration.
-    Examples:
-        - "Has anyone joined my table?" -> table_id from duels_create_table
-        - "I got this table link, what is in it?" -> table_id is the last path segment of the URL
-
     """
     app = app_ctx(ctx)
     view = await app.client.get(f"/api/table/{table_id}/view")

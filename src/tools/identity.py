@@ -32,6 +32,12 @@ async def duels_whoami(
     Do NOT use it for gameplay statistics - duels_get_account_stats has win
     rates and season results.
 
+    Examples:
+    - "Am I logged in to Duels.ink?" -> call with defaults
+    - "Why do my deck tools fail?" -> authenticated=false means the cookie
+    is missing or expired
+    - "What build is Duels.ink on?" -> read build_id
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
@@ -51,11 +57,6 @@ async def duels_whoami(
             "base_url": str
         }
 
-    Examples:
-        - "Am I logged in to Duels.ink?" -> call with defaults
-        - "Why do my deck tools fail?" -> authenticated=false means the cookie
-          is missing or expired
-        - "What build is Duels.ink on?" -> read build_id
     """
     app = app_ctx(ctx)
     session = await app.client.get_session() if app.client.authenticated else None
@@ -136,6 +137,10 @@ async def duels_get_account_stats(
     Do NOT use for a list of individual matches (duels_get_match_history) or
     for global rankings across all players (duels_get_leaderboard).
 
+    Examples:
+    - "What's my win rate?" -> read stats
+    - "How did I place last season?" -> read seasons
+
     Args:
         ctx (Context): Injected by FastMCP.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
@@ -145,10 +150,6 @@ async def duels_get_account_stats(
         mirror the Duels.ink account endpoints rather than a fixed schema. Any
         section that fails individually comes back as
         {"unavailable": "<reason>"} so a partial answer is still returned.
-
-    Examples:
-        - "What's my win rate?" -> read stats
-        - "How did I place last season?" -> read seasons
 
     Error Handling:
         Returns "Error: ... requires a signed-in Duels.ink account" when no

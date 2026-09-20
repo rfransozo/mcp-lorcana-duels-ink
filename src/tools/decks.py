@@ -82,6 +82,10 @@ async def duels_list_my_decks(
     Do NOT use for community decks (duels_browse_public_decks) or for a deck's
     full card list (duels_get_deck).
 
+    Examples:
+    - "Which decks do I have?" -> call with defaults
+    - "Pick a deck for ranked" -> take an id from here into duels_join_matchmaking
+
     Args:
         ctx (Context): Injected by FastMCP.
         limit (int): 1-100, default 50.
@@ -92,10 +96,6 @@ async def duels_list_my_decks(
         str: {"total","count","offset","has_more","next_offset",
         "decks": [{"id","name","card_count","colors","legal_formats","valid",
         "visibility","updated_at"}]}.
-    Examples:
-        - "Which decks do I have?" -> call with defaults
-        - "Pick a deck for ranked" -> take an id from here into duels_join_matchmaking
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Listing your decks")
@@ -138,6 +138,10 @@ async def duels_browse_public_decks(
     decks are precons or curated libraries and are not tournament-legal - check
     the `valid` flag before queueing with one.
 
+    Examples:
+    - "Find a ruby deck to practise against" -> query='ruby'
+    - "Give me any playable deck" -> call with defaults and take the first valid one
+
     Args:
         ctx (Context): Injected by FastMCP.
         query (Optional[str]): Substring match on the deck name.
@@ -149,9 +153,6 @@ async def duels_browse_public_decks(
         str: The same envelope as duels_list_my_decks, with "owner" and "likes"
         populated.
 
-    Examples:
-        - "Find a ruby deck to practise against" -> query='ruby'
-        - "Give me any playable deck" -> call with defaults and take the first valid one
     """
     app = app_ctx(ctx)
     data = await app.client.get("/api/decks/public", authed=False)
@@ -190,6 +191,10 @@ async def duels_get_deck(
 
     Do NOT use to search the card catalog (duels_search_cards).
 
+    Examples:
+    - "What is in my Tourmaline deck?" -> deck_id from duels_list_my_decks
+    - "Copy this community list" -> pass its card_ids to duels_create_deck
+
     Args:
         ctx (Context): Injected by FastMCP.
         deck_id (str): Deck UUID, from duels_list_my_decks or duels_browse_public_decks.
@@ -199,10 +204,6 @@ async def duels_get_deck(
         str: {"id","name","card_count","colors","legal_formats","valid","owner",
         "card_ids": [...],        # flat, one entry per copy - pass to duels_start_bot_game
         "entries": [{"definition_id","name","quantity","cost","type"}]}
-    Examples:
-        - "What is in my Tourmaline deck?" -> deck_id from duels_list_my_decks
-        - "Copy this community list" -> pass its card_ids to duels_create_deck
-
     """
     app = app_ctx(ctx)
     deck = await _fetch_deck(app, deck_id)
@@ -285,6 +286,10 @@ async def duels_create_deck(
     card names - card_ids takes catalog ids like '10-71'. Use
     duels_import_decklist when you have a text decklist with names.
 
+    Examples:
+    - "Create an empty deck called Ramp v2" -> name='Ramp v2'
+    - "Save this list as Amber Aggro" -> name='Amber Aggro', card_ids=[...]
+
     Args:
         ctx (Context): Injected by FastMCP.
         name (str): Deck name.
@@ -293,10 +298,6 @@ async def duels_create_deck(
 
     Returns:
         str: {"id","name","card_count","colors","valid", ...} for the new deck.
-    Examples:
-        - "Create an empty deck called Ramp v2" -> name='Ramp v2'
-        - "Save this list as Amber Aggro" -> name='Amber Aggro', card_ids=[...]
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a deck")
@@ -368,6 +369,10 @@ async def duels_update_deck(
 
     Do NOT use to delete a deck (duels_delete_deck).
 
+    Examples:
+    - "Rename it to Tourmaline v3" -> deck_id, name='Tourmaline v3'
+    - "Swap two Flotsam for two Mushu" -> read duels_get_deck, edit the list, send the whole card_ids back
+
     Args:
         ctx (Context): Injected by FastMCP.
         deck_id (str): Deck UUID.
@@ -377,10 +382,6 @@ async def duels_update_deck(
 
     Returns:
         str: The deck's updated summary.
-
-    Examples:
-        - "Rename it to Tourmaline v3" -> deck_id, name='Tourmaline v3'
-        - "Swap two Flotsam for two Mushu" -> read duels_get_deck, edit the list, send the whole card_ids back
 
     Error Handling:
         Returns an error when neither name nor card_ids is supplied.
@@ -440,6 +441,9 @@ async def duels_delete_deck(
     does that without destroying anything. Do NOT use it on a deck you did not
     create: only your own decks can be deleted.
 
+    Examples:
+    - "Delete the deck I just imported" -> confirm the name with duels_get_deck first, then deck_id
+
     Args:
         ctx (Context): Injected by FastMCP.
         deck_id (str): Deck UUID to delete.
@@ -447,9 +451,6 @@ async def duels_delete_deck(
 
     Returns:
         str: {"success": bool, "deck_id": str}.
-    Examples:
-        - "Delete the deck I just imported" -> confirm the name with duels_get_deck first, then deck_id
-
     """
     app = app_ctx(ctx)
     app.client.require_auth("Deleting a deck")
@@ -501,6 +502,10 @@ async def duels_import_decklist(
     Do NOT use when you already have definitionIds - duels_create_deck takes
     them directly without a name lookup.
 
+    Examples:
+    - "Import this as Ramp v2: 4 Flotsam - Slippery as an Eel ..." -> name='Ramp v2', decklist='...'
+    - "Load the list from this tournament report" -> paste the text straight into decklist
+
     Args:
         ctx (Context): Injected by FastMCP.
         name (str): Name for the new deck.
@@ -510,10 +515,6 @@ async def duels_import_decklist(
     Returns:
         str: {"deck": {...}, "imported": int, "unmatched": [str],
         "resolved": [{"line","name","definition_id","quantity"}]}.
-
-    Examples:
-        - "Import this as Ramp v2: 4 Flotsam - Slippery as an Eel ..." -> name='Ramp v2', decklist='...'
-        - "Load the list from this tournament report" -> paste the text straight into decklist
 
     Error Handling:
         Returns an error when no line could be parsed at all. A partially

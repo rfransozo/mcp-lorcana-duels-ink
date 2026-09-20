@@ -126,6 +126,11 @@ async def duels_search_cards(
     batches that far more cheaply. Do NOT use to list saved decks
     (duels_list_my_decks) or community decks (duels_browse_public_decks).
 
+    Examples:
+    - "Find Evasive characters that cost 3" -> query='Evasive', cost=3
+    - "Show me ruby songs" -> color='ruby', card_type='song'
+    - "What is Flotsam?" -> query='Flotsam'
+
     Args:
         ctx (Context): Injected by FastMCP.
         query (Optional[str]): Free text over names and rules text.
@@ -156,11 +161,6 @@ async def duels_search_cards(
                 }
             ]
         }
-
-    Examples:
-        - "Find Evasive characters that cost 3" -> query='Evasive', cost=3
-        - "Show me ruby songs" -> color='ruby', card_type='song'
-        - "What is Flotsam?" -> query='Flotsam'
 
     Error Handling:
         Returns "No cards found..." when nothing matches. Invalid card_type or
@@ -236,6 +236,10 @@ async def duels_get_card(
     Do NOT use to look a card up by name (use duels_search_cards) or to resolve
     many ids at once (use duels_resolve_cards, which batches).
 
+    Examples:
+    - "What is card 10-71?" -> definition_id='10-71'
+    - "Details for the hand card with definitionId 11-97" -> definition_id='11-97'
+
     Args:
         ctx (Context): Injected by FastMCP.
         definition_id (str): Catalog id in '<set>-<number>' form, e.g. '10-71'.
@@ -247,9 +251,6 @@ async def duels_get_card(
         abilities, rulesText, flavorText, imageUrl - or a "not found" message
         explaining the id format.
 
-    Examples:
-        - "What is card 10-71?" -> definition_id='10-71'
-        - "Details for the hand card with definitionId 11-97" -> definition_id='11-97'
     """
     app = app_ctx(ctx)
     card = await app.catalog.get(definition_id)
@@ -309,6 +310,10 @@ async def duels_resolve_cards(
     (duels_get_card), and do NOT use it to search by name (duels_search_cards).
     You rarely need it for gameplay: duels_get_game_state already resolves names.
 
+    Examples:
+    - "What are cards 10-71 and 11-97?" -> definition_ids=['10-71','11-97']
+    - "Name every card in this decklist" -> pass the whole id list
+
     Args:
         ctx (Context): Injected by FastMCP.
         definition_ids (list[str]): 1-120 catalog ids.
@@ -323,9 +328,6 @@ async def duels_resolve_cards(
         }
         Unknown ids are listed rather than silently dropped.
 
-    Examples:
-        - "What are cards 10-71 and 11-97?" -> definition_ids=['10-71','11-97']
-        - "Name every card in this decklist" -> pass the whole id list
     """
     app = app_ctx(ctx)
     resolved = await app.catalog.resolve_many(definition_ids)
