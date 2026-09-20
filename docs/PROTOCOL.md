@@ -123,8 +123,12 @@ out. Both keys look alike in the logs, so this one cost a turn to find.
 
 `game.availableActions.cards[instanceId]` booleans observed in play:
 `canInk`, `canPlay`, `canQuest`, `canChallenge`, `canSing`, `canMove`,
-`canBoost`, plus the non-actions `canAffordInkCost`, `canBeSinger` and
-`hasSingTogether`.
+`canBoost`, plus the non-actions `canAffordInkCost`, `canBeSinger`,
+`hasSingTogether` and `hasQuestAbility`.
+
+Anything with a `has` prefix describes the card, never a move that can be made
+now: `hasQuestAbility` appears on a character whose ink is still wet and which
+therefore cannot quest at all.
 
 `canMove` and `canBoost` are conditional on the board, which is why both were
 once wrongly written off as nonexistent. `canMove` needs a location in play and
