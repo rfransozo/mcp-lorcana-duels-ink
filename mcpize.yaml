@@ -25,6 +25,8 @@ startCommand:
 # modo "shared" e ninguém é solicitado a informar o cookie.
 # ⚠️  A chave é `credentials` — `user_secrets` NÃO existe no schema do manifest
 #     e é descartada em silêncio.
+# ⚠️  Não adicione `mapping:` — o deploy avisa que não tem efeito: o `name` da
+#     credencial já É o nome da env var entregue ao runtime.
 credentials_mode: per_user
 credentials:
   - name: DUELS_SESSION_COOKIE
@@ -40,5 +42,3 @@ credentials:
       needs refreshing periodically.
     placeholder: __Secure-better-auth.session_token value
     docs_url: https://duels.ink
-    mapping:
-      env: DUELS_SESSION_COOKIE
