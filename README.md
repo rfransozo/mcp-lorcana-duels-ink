@@ -1,7 +1,7 @@
 # MCP Lorcana — Duels.ink
 
 Play and manage **Disney Lorcana** on [Duels.ink](https://duels.ink) from an AI
-assistant. 43 tools covering matches, decks, the card catalog, statistics,
+assistant. 44 tools covering matches, decks, the card catalog, statistics,
 replays and the social side of the site.
 
 > Unofficial. Not affiliated with, endorsed by, or connected to Duels.ink,

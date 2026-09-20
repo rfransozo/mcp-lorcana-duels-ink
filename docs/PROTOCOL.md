@@ -82,6 +82,31 @@ sending the wrong one is rejected with "Character not on field!".
 
 `choice` for the coin toss is `"play"` / `"draw"` - *not* "first"/"second".
 
+## Matchmaking
+
+Joining is three concurrent things, not one request:
+
+```
+POST /api/matchmaking/join       {deckId, deckCardIds, queueId, competitiveOnly}
+GET  /api/matchmaking/events     Server-Sent Events, carries the pairing
+POST /api/matchmaking/heartbeat  about once a second, for as long as you wait
+```
+
+**The heartbeat is what makes the entry real.** Without it `join` still
+returns `{success, position, estimatedWait, queueId}` and calling it again
+still reports a position, but nobody is ever paired with you. This is not
+visible from the API alone - it took watching the site to find.
+
+Re-POSTing `join` is not a way to poll: it re-enters the queue, moving you to
+the back, and can undo a pairing already under way. On a match the client
+POSTs `leave` itself and opens the game, so leaving is part of the success
+path too. The pairing then shows up in `/api/account/active-games`, which is
+enough to detect it without an SSE client - the events stream was seen
+returning 503 mid-queue while the queue itself stayed healthy.
+
+Queue ids do not match the UI labels: "Quick Play: Core BO1" is `quick-play`,
+while `core-bo1` is the ranked "Core BO1 - Set 13" beside it.
+
 ## Prompts
 
 `game.pendingPrompts` is a list. Every response nests `promptId` **inside**

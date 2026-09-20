@@ -17,6 +17,7 @@ from fastmcp import Context, FastMCP
 from .cards import CardCatalog
 from .client import DuelsClient, DuelsError
 from .gamews import GameRegistry
+from .matchmaking import Matchmaker
 
 load_dotenv()
 
@@ -71,6 +72,7 @@ class AppContext:
     client: DuelsClient
     catalog: CardCatalog
     games: GameRegistry
+    matchmaker: Matchmaker
 
 
 @asynccontextmanager
@@ -81,6 +83,7 @@ async def lifespan(_server: FastMCP):
         client=client,
         catalog=CardCatalog(client),
         games=GameRegistry(client),
+        matchmaker=Matchmaker(client),
     )
     log.info(
         "duels_mcp starting (base=%s, authenticated=%s)",
@@ -90,6 +93,7 @@ async def lifespan(_server: FastMCP):
     try:
         yield ctx
     finally:
+        await ctx.matchmaker.close()
         await ctx.games.close_all()
         await client.aclose()
         log.info("duels_mcp stopped")

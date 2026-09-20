@@ -454,6 +454,11 @@ async def duels_join_matchmaking(
     }
     data = await app.client.post("/api/matchmaking/join", body)
 
+    # Joining alone never matches anyone: the entry has to be kept alive with a
+    # heartbeat, which the site sends about once a second for as long as it is
+    # queued. See src/matchmaking.py for how that was found.
+    app.matchmaker.start(queue_id, deck_id)
+
     def md(p: dict) -> str:
         if p.get("gameId"):
             return f"**Match found.** Game `{p['gameId']}` - continue with duels_get_game_state."
@@ -465,11 +470,94 @@ async def duels_join_matchmaking(
                 bullet("Position", p.get("position")),
                 bullet("Estimated wait", p.get("estimatedWait")),
                 "",
-                "Call `duels_list_active_games` to see when a match is found.",
+                "Staying in the queue now - a heartbeat is running.",
+                "Call `duels_await_match` to block until an opponent is found.",
+                "Do NOT call this tool again to poll: it re-enters the queue and",
+                "sends you to the back.",
             ]
         )
 
     return render(data if isinstance(data, dict) else {"result": data}, response_format, md)
+
+
+@mcp.tool(
+    name="duels_await_match",
+    annotations={
+        "title": "Wait for an Opponent",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+@tool_errors
+async def duels_await_match(
+    ctx: Context,
+    timeout_seconds: Annotated[
+        int,
+        Field(default=120, description="How long to block before giving up.", ge=5, le=600),
+    ] = 120,
+    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
+) -> str:
+    """Blocks until duels_join_matchmaking finds you an opponent, then returns the game.
+
+    Call this straight after joining a queue and leave it blocking. It keeps
+    the heartbeat running that the queue entry depends on, so waiting here is
+    what makes a match happen at all.
+
+    Timing out is not an error - the queue is still live and you can call this
+    again to keep waiting. Real people are on the other side, so once it
+    returns, play promptly.
+
+    Do NOT poll by calling duels_join_matchmaking repeatedly: that re-enters
+    the queue, sends you to the back, and can undo a pairing in progress.
+
+    Examples:
+    - "Wait for my opponent" -> call after duels_join_matchmaking
+    - "Keep waiting, the queue is slow" -> call again, timeout_seconds=300
+
+    Args:
+        ctx (Context): Injected by FastMCP.
+        timeout_seconds (int): 5-600, default 120.
+        response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: {"game_id": str, "beats": int} on a match, or
+             {"timed_out": True, "queue_id": str, "beats": int} while waiting.
+
+    Error Handling:
+        Says plainly when you are not queued, rather than blocking for nothing.
+    """
+    app = app_ctx(ctx)
+    app.client.require_auth("Matchmaking")
+
+    if not app.matchmaker.queued:
+        raise DuelsError(
+            "You are not in a queue, so there is nothing to wait for. Join one "
+            "with duels_join_matchmaking first."
+        )
+
+    result = await app.matchmaker.wait_for_match(timeout_seconds)
+
+    def md(p: dict) -> str:
+        if p.get("game_id"):
+            return join_lines(
+                [
+                    f"**Match found.** Game `{p['game_id']}`",
+                    "",
+                    "There is a real person waiting - play with duels_get_game_state.",
+                ]
+            )
+        return join_lines(
+            [
+                f"Still queued in {p.get('queue_id')} after {timeout_seconds}s "
+                f"({p.get('beats')} heartbeats sent).",
+                "",
+                "That is not an error. Call this again to keep waiting.",
+            ]
+        )
+
+    return render(result, response_format, md)
 
 
 @mcp.tool(
@@ -510,6 +598,7 @@ async def duels_leave_matchmaking(
     """
     app = app_ctx(ctx)
     app.client.require_auth("Leaving the queue")
+    app.matchmaker.stop()
     data = await app.client.post("/api/matchmaking/leave", {})
     return render(
         data if isinstance(data, dict) else {"result": data},
