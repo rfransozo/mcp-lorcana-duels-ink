@@ -250,6 +250,26 @@ giving each candidate's contribution. When they add up, `canSing` flips to true
 and `validSingers` fills; the song is then played with `PLAY_CARD` carrying
 **every** singer in `singerInstanceIds`, not just one.
 
+## The clock (human games only)
+
+Games against people are timed; bot games are not. `roomView.timerPreset` says
+which - `"none"` in every bot game seen so far. Nothing in `gameState` carries a
+countdown, so the only evidence of the clock is the game log:
+
+```
+[P2] Your timer started (2:00)
+[P1] Opponent gained 45 seconds (turn end)
+```
+
+So it is a chess clock: a per-turn budget, observed at two minutes, plus about
+45 seconds credited back when a turn is ended. `turnGateState` is *not* this -
+it holds per-turn counters (inked yet, cards played) and says nothing about
+time.
+
+The practical consequence is that a caller cannot see its own clock from the
+state at all, and a slow turn can lose a won game without any warning. Reading
+the tail of the log is the only way to check.
+
 ## Game log
 
 ```json
