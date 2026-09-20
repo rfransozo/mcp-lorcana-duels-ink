@@ -21,6 +21,7 @@ from src.app import SERVER_NAME, log, mcp  # noqa: E402
 
 # Importing the tool modules registers their @mcp.tool definitions.
 from src.tools import (  # noqa: E402,F401
+    analysis,
     cards,
     decks,
     history,

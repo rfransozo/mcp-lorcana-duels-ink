@@ -37,6 +37,7 @@ async def tools():
 
     from src.app import mcp
     from src.tools import (  # noqa: F401  - importing registers the tools
+        analysis,
         cards,
         decks,
         history,
@@ -84,7 +85,7 @@ class TestNaming:
         assert len(names) == len(set(names))
 
     async def test_the_surface_is_not_empty(self, tools):
-        assert len(tools) >= 40
+        assert len(tools) >= 43
 
 
 class TestAnnotations:

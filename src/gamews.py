@@ -355,6 +355,7 @@ class GameRegistry:
         self._client = client
         self._games: dict[str, GameConnection] = {}
         self._anon_sessions: dict[str, str] = {}
+        self._decks: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     async def get(
@@ -384,6 +385,19 @@ class GameRegistry:
 
     def session_for(self, game_id: str) -> Optional[str]:
         return self._anon_sessions.get(game_id)
+
+    def remember_deck(self, game_id: str, deck_id: Optional[str]) -> None:
+        """Record which deck a game was started with.
+
+        duels_get_deck_tracker needs the decklist to work out what is left, and
+        making the caller repeat the id on every call is exactly the sort of
+        thing an agent forgets.
+        """
+        if deck_id:
+            self._decks[game_id] = deck_id
+
+    def deck_for(self, game_id: str) -> Optional[str]:
+        return self._decks.get(game_id)
 
     async def drop(self, game_id: str) -> None:
         """Close and forget one game (after conceding, abandoning or finishing)."""

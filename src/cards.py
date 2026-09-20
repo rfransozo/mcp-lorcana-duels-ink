@@ -38,6 +38,12 @@ SUMMARY_FIELDS = (
     "rarity",
     "subtypes",
     "rulesText",
+    # Keyword and named abilities arrive already structured - abilities as
+    # [{"ability": "Resist", "value": 1}] and specialAbilities as
+    # [{"name": "LOW BATTERIES", "effect": "..."}] - so the renderer can show
+    # them without parsing rulesText.
+    "abilities",
+    "specialAbilities",
 )
 
 

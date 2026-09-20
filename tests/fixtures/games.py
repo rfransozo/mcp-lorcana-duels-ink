@@ -61,7 +61,12 @@ def base_game(**overrides: Any) -> dict:
             ],
             "items": [card(LOCATION_CORONA, "13-12")],
             "inkwell": [card("ink-1", "12-133"), card("ink-2", "12-133")],
-            "discard": [],
+            # Duplicado de propósito: o descarte agrupa por carta com contagem.
+            "discard": [
+                card("disc-1", "10-103"),
+                card("disc-2", "10-103"),
+                card("disc-3", "12-77"),
+            ],
             "lore": 4,
             "inkDrops": 0,
             "deckCount": 48,
@@ -72,7 +77,7 @@ def base_game(**overrides: Any) -> dict:
             "field": [card(OPP_PETE, "5-195", exerted=True)],
             "items": [],
             "inkwell": [card("opp-ink-1", "12-133")],
-            "discard": [],
+            "discard": [card("opp-disc-1", "5-195")],
             "lore": 2,
         },
         "availableActions": {

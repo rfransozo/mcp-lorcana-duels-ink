@@ -38,15 +38,29 @@ Lorcana simulator.
 
 Key things to know before playing:
 
-* You never need to know Lorcana's rules. Duels.ink computes the legal moves \
-server-side. Call duels_get_game_state and play only what appears under \
-"legal_moves"; when a card cannot be played, the state says why.
 * Cards have two different ids. `definitionId` ("10-71") identifies the card \
 in the catalog; `instanceId` (a UUID) identifies one physical copy inside a \
 game. In-game tools always want the instanceId.
 * Bot games work without an account. Everything tied to a user - your decks, \
 ranked matchmaking, tables, friends, match history - needs DUELS_SESSION_COOKIE \
 to be configured.
+
+Playing legally and playing well are different skills:
+
+* `legal_moves` tells you what is **permitted**, never what is **good**. \
+Duels.ink computes legality, so you cannot make an illegal move - but choosing \
+between the legal ones is yours, and that is where games are won or lost.
+* **Read the card text.** Every card in the state carries its rules text and \
+its keywords, and they change what is possible: Evasive can only be challenged \
+by Evasive, Bodyguard must be challenged first, Ward cannot be targeted, Resist \
+reduces damage. Check them before attacking or spending removal.
+* **Read the opponent.** Their board and discard are visible. Ink colours and \
+the cost curve tell you which deck you are facing, usually by turn three, and \
+the discard says what they have already spent.
+* **Track your own deck** with duels_get_deck_tracker - what is left, and \
+therefore what you can still expect to draw.
+* Watch the lore race both ways. First to 20 wins, so weigh your lore per turn \
+against theirs before deciding whether to quest or to trade in a challenge.
 """
 
 

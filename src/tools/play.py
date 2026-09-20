@@ -136,6 +136,7 @@ async def duels_start_bot_game(
     if not game_id:
         raise DuelsError(f"Duels.ink did not return a game id: {result}")
     app.games.remember_session(game_id, session_id)
+    app.games.remember_deck(game_id, deck_id)
 
     conn = await app.games.get(game_id, session_id)
     state = await render_game_state(await conn.refresh(), app.catalog)

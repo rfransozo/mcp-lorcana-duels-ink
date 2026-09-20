@@ -96,20 +96,65 @@ sending the wrong one is rejected with "Character not on field!".
 | `select_trigger` | `skip_trigger` / `resolve_trigger` | `triggerId` |
 | `boolean` | `boolean` | `value` (bool) |
 | `select_target` | `select_target` | `targetInstanceIds` (list) |
-| `select_card` | `select_card` | `selectedCardIds` (list) |
+| `select_card` | `select_card` | `cardInstanceIds` (list) |
 | `select_numeric` | `select_numeric` | `numericValue` |
 
 Prompt objects carry what is needed to answer: `select_target` has
 `validTargets`, `minSelect`, `maxSelect`, `intent`; `boolean` has `yesLabel`,
 `noLabel`, `yesDescription`, `noDescription`, `recommendedChoice`;
-`select_trigger` has `triggers[]` with `abilityName` and `abilityDescription`.
+`select_trigger` has `triggers[]` with `abilityName` and `abilityDescription`;
+`select_card` lists its options under `cardInstanceIds`.
+
+`select_card` answers under `cardInstanceIds`, **not** `selectedCardIds` - that
+key belongs to `MULLIGAN`, and sending it here is simply ignored: no
+acknowledgement, no error, the prompt just stays pending until the call times
+out. Both keys look alike in the logs, so this one cost a turn to find.
 
 ## Card capability flags
 
 `game.availableActions.cards[instanceId]` booleans observed in play:
-`canInk`, `canPlay`, `canQuest`, `canChallenge`, `canSing`, plus the
-non-actions `canAffordInkCost` and `canBeSinger`. Blocked plays carry a
-human-readable `playBlockedReason` such as `"Need 3 ink"`.
+`canInk`, `canPlay`, `canQuest`, `canChallenge`, `canSing`, `canMove`, plus the
+non-actions `canAffordInkCost`, `canBeSinger` and `hasSingTogether`.
+
+`canMove` only appears once you control a location, so a board without one
+never reveals it - it was wrongly written off as nonexistent until a deck with
+locations was played. It is answered with `MOVE_TO_LOCATION`.
+
+Every refusal is explained, not just unplayable cards: `playBlockedReason`
+("Need 3 ink"), `questBlockedReason` / `challengeBlockedReason` ("Ink dry (no
+Rush)") and `inkBlockedReason` ("Already inked this turn").
+
+### Activated abilities
+
+Items and locations carry no `canActivate` flag. They carry a structured list
+with the costs already resolved:
+
+```json
+"activatedAbilities": [
+  {"name": "OUT OF SIGHT", "inkCost": 3, "exertCost": false, "banishCost": false,
+   "discardCost": 0, "canActivate": false, "blockedReason": "Not enough ink (need 3)"}
+]
+```
+
+Answered with `ACTIVATE_ABILITY` carrying `cardInstanceId` and `abilityName`.
+
+### Challenge maths
+
+A character that can challenge carries `challengeTargetInfo[]`, one entry per
+legal target, with the outcome already computed: `damageToTarget`,
+`willBanishTarget`, `damageToAttacker`, `willBanishAttacker`,
+`targetResistReduction`, `attackerResistReduction`, `hasBodyguard`,
+`hasEvasive`, `hasWard`, `isLocationTarget`. Alongside it: `effectiveStrength`,
+`effectiveLore` and `challengerBonus`.
+
+### Sing Together
+
+A song with the keyword reports `hasSingTogether: true` from the first turn -
+it describes the card, not an available move. What decides playability is
+`singTogetherCost` against `totalAvailableSingerCost`, with `singerCosts`
+giving each candidate's contribution. When they add up, `canSing` flips to true
+and `validSingers` fills; the song is then played with `PLAY_CARD` carrying
+**every** singer in `singerInstanceIds`, not just one.
 
 ## Game log
 

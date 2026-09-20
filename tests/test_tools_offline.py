@@ -294,6 +294,35 @@ class TestPrompts:
         assert response["type"] == "select_target"
         assert response["targetInstanceIds"] == [games.FIELD_ELSA]
 
+    async def test_select_card_answers_under_cardInstanceIds(self, router, mcp_client):
+        """Regression from a live game: a Gantu played for its 3/3 body opened
+        a `choose and discard` prompt that never resolved. The response was
+        built with selectedCardIds - the key MULLIGAN uses - and Duels.ink
+        acknowledged nothing, so the turn sat on the prompt until it timed
+        out. The prompt lists its options under cardInstanceIds and wants the
+        answer there too."""
+        server, text = await self._with_prompt(
+            router, mcp_client, prompts.SELECT_CARD, selected_card_ids=[games.HAND_SONG]
+        )
+        assert not text.startswith("Error:")
+        response = server.received[-1]["action"]["response"]
+        assert response == {
+            "promptId": prompts.SELECT_CARD["id"],
+            "type": "select_card",
+            "cardInstanceIds": [games.HAND_SONG],
+        }
+
+    async def test_select_card_never_sends_the_mulligan_key(self, router, mcp_client):
+        server, _ = await self._with_prompt(
+            router, mcp_client, prompts.SELECT_CARD, selected_card_ids=[games.HAND_SONG]
+        )
+        assert "selectedCardIds" not in server.received[-1]["action"]["response"]
+
+    async def test_select_card_without_cards_names_its_own_options(self, router, mcp_client):
+        _server, text = await self._with_prompt(router, mcp_client, prompts.SELECT_CARD)
+        assert text.startswith("Error:")
+        assert "selected_card_ids" in text
+
     async def test_wrong_argument_names_the_prompts_own_options(self, router, mcp_client):
         """The error has to be self-correcting: an agent that guessed wrong
         needs to see what this prompt actually offers."""
@@ -377,3 +406,99 @@ class TestLegalMovesAreCallable:
                 for value in move["args"].values():
                     if isinstance(value, str) and value.startswith("<"):
                         assert value.endswith(">")
+
+
+class TestDeckTracker:
+    """The third blind spot: 60 cards played without ever knowing what was
+    left in the deck, or what the opponent had actually shown."""
+
+    async def test_counts_what_is_left(self, mcp_client, router, game_server):
+        router.json_on(
+            "/api/game/create-bot-game", {"gameId": games.GAME_ID, "sessionId": None}
+        )
+        await call_json(
+            mcp_client, "duels_start_bot_game", deck_id=deck_fixtures.DECK_ID
+        )
+        payload = await call_json(
+            mcp_client, "duels_get_deck_tracker", game_id=games.GAME_ID
+        )
+        mine = payload["my_deck"]
+        assert mine["total"] == len(deck_fixtures.CARD_IDS)
+        assert mine["remaining"] == mine["total"] - mine["seen"]
+
+    async def test_deck_id_is_remembered_from_the_game(self, mcp_client, router, game_server):
+        """A tracker that had to be handed the deck id on every call is one an
+        agent forgets to use."""
+        router.json_on(
+            "/api/game/create-bot-game", {"gameId": games.GAME_ID, "sessionId": None}
+        )
+        await call_json(
+            mcp_client, "duels_start_bot_game", deck_id=deck_fixtures.DECK_ID
+        )
+        payload = await call_json(
+            mcp_client, "duels_get_deck_tracker", game_id=games.GAME_ID
+        )
+        assert payload["my_deck"]["deck_id"] == deck_fixtures.DECK_ID
+
+    async def test_unknown_deck_asks_for_one(self, mcp_client, game_server):
+        text = await call_text(
+            mcp_client, "duels_get_deck_tracker", game_id=games.GAME_ID
+        )
+        assert text.startswith("Error:")
+        assert "duels_list_my_decks" in text
+
+    async def test_explicit_deck_id_works_without_a_remembered_one(
+        self, mcp_client, game_server
+    ):
+        payload = await call_json(
+            mcp_client,
+            "duels_get_deck_tracker",
+            game_id=games.GAME_ID,
+            deck_id=deck_fixtures.DECK_ID,
+        )
+        assert payload["my_deck"]["total"] == len(deck_fixtures.CARD_IDS)
+
+    async def test_cards_on_board_are_subtracted(self, mcp_client, game_server):
+        """Flotsam is in hand in the fixture, so fewer remain in the deck."""
+        payload = await call_json(
+            mcp_client,
+            "duels_get_deck_tracker",
+            game_id=games.GAME_ID,
+            deck_id=deck_fixtures.DECK_ID,
+        )
+        rows = {r["definition_id"]: r["count"] for r in payload["my_deck"]["remaining_cards"]}
+        in_deck = deck_fixtures.CARD_IDS.count("10-71")
+        assert rows.get("10-71", 0) < in_deck
+
+    async def test_opponent_revealed_cards_and_colors(self, mcp_client, game_server):
+        payload = await call_json(
+            mcp_client,
+            "duels_get_deck_tracker",
+            game_id=games.GAME_ID,
+            deck_id=deck_fixtures.DECK_ID,
+        )
+        theirs = payload["opponent_revealed"]
+        assert theirs["count"] >= 1
+        assert "steel" in theirs["colors"]      # Pete, on their board
+        assert any(r["name"].startswith("Pete") for r in theirs["cards"])
+
+    async def test_opponent_hand_is_never_revealed(self, mcp_client, game_server):
+        """Hidden information must stay hidden: only board and discard show."""
+        payload = await call_json(
+            mcp_client,
+            "duels_get_deck_tracker",
+            game_id=games.GAME_ID,
+            deck_id=deck_fixtures.DECK_ID,
+        )
+        assert "hand" not in payload["opponent_revealed"]
+        assert "deck" not in payload["opponent_revealed"]
+
+    async def test_markdown_is_readable(self, mcp_client, game_server):
+        text = await call_text(
+            mcp_client,
+            "duels_get_deck_tracker",
+            game_id=games.GAME_ID,
+            deck_id=deck_fixtures.DECK_ID,
+        )
+        assert "Still in your deck" in text
+        assert "Opponent has shown" in text

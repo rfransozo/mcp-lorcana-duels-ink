@@ -150,6 +150,7 @@ async def mcp_client(monkeypatch, router: RecordingRouter):
     import src.app as app_module
     from src.app import mcp
     from src.tools import (  # noqa: F401  - importing registers the tools
+        analysis,
         cards,
         decks,
         history,

@@ -117,7 +117,7 @@ class TestSearch:
             ({"color": "ruby"}, {"12-133", "10-103"}),
             ({"cost": 3}, {"10-71", "10-45", "5-195", "13-12"}),
             ({"inkable": False}, {"10-103"}),
-            ({"rarity": "uncommon"}, {"11-97", "5-195"}),
+            ({"rarity": "uncommon"}, {"11-97", "5-195", "12-77"}),
         ],
     )
     async def test_local_filters(self, catalog, kwargs, expected_ids):
@@ -126,11 +126,11 @@ class TestSearch:
 
     async def test_filters_combine_with_and(self, catalog):
         rows, _ = await catalog.search(card_type="character", color="emerald", limit=100)
-        assert {r["id"] for r in rows} == {"10-71", "13-80"}
+        assert {r["id"] for r in rows} == {"10-71", "13-80", "12-77"}
 
     async def test_filters_are_case_insensitive(self, catalog):
         rows, _ = await catalog.search(color="EMERALD", card_type="Character", limit=100)
-        assert {r["id"] for r in rows} == {"10-71", "13-80"}
+        assert {r["id"] for r in rows} == {"10-71", "13-80", "12-77"}
 
     async def test_total_reflects_matches_not_the_page(self, catalog):
         rows, total = await catalog.search(card_type="character", limit=1)

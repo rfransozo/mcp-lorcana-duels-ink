@@ -23,6 +23,8 @@ CARDS: list[dict] = [
         "willpower": 2,
         "lore": 1,
         "subtypes": ["Storyborn", "Ally"],
+        "abilities": [{"ability": "Evasive"}],
+        "specialAbilities": [],
         "rulesText": "Evasive (Only characters with Evasive can challenge this character.)",
         "flavorText": '"You\'re in our world now."',
         "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-71.webp",
@@ -125,6 +127,14 @@ CARDS: list[dict] = [
         "willpower": 3,
         "lore": 1,
         "subtypes": ["Dreamborn", "Villain"],
+        "abilities": [],
+        "specialAbilities": [
+            {
+                "name": "BLOW THE WHISTLE",
+                "slug": "blow-the-whistle",
+                "effect": "Opponents can't play actions until the start of your next turn.",
+            }
+        ],
         "rulesText": (
             "BLOW THE WHISTLE Opponents can't play actions until the start of your next turn."
         ),
@@ -147,6 +157,8 @@ CARDS: list[dict] = [
         "willpower": 4,
         "lore": 2,
         "subtypes": ["Storyborn", "Ally"],
+        "abilities": [{"ability": "Rush"}],
+        "specialAbilities": [],
         "rulesText": "Rush (This character can challenge the turn they're played.)",
         "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-103.webp",
     },
@@ -168,8 +180,71 @@ CARDS: list[dict] = [
         "lore": 1,
         "moveCost": 1,
         "subtypes": [],
+        "abilities": [{"ability": "Ward"}],
+        "specialAbilities": [],
         "rulesText": "Characters gain Ward while here.",
         "imageUrl": "https://cards.duels.ink/lorcana/en/full/13-12.webp",
+    },
+    {
+        # Resist e Singer trazem `value` - o outro formato real de `abilities`.
+        "id": "7-11",
+        "fullId": "11/204 EN 7",
+        "name": "The Troubadour",
+        "title": "Musical Narrator",
+        "fullName": "The Troubadour - Musical Narrator",
+        "slug": "the-troubadour-musical-narrator",
+        "type": "character",
+        "colors": ["amber", "steel"],
+        "cost": 2,
+        "inkable": True,
+        "rarity": "common",
+        "legality": ["core", "infinity"],
+        "strength": 1,
+        "willpower": 3,
+        "lore": 1,
+        "subtypes": ["Storyborn", "Ally"],
+        "abilities": [{"ability": "Resist", "value": 1}, {"ability": "Singer", "value": 4}],
+        "specialAbilities": [],
+        "rulesText": (
+            "Resist +1 (Damage dealt to this character is reduced by 1.) "
+            "Singer 4 (This character counts as cost 4 to sing songs.)"
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/7-11.webp",
+    },
+    {
+        # A carta que me custou 2 lore por eu não ver o texto dela.
+        "id": "12-77",
+        "fullId": "77/204 EN 12",
+        "name": "RC",
+        "title": "Remote-Controlled Car",
+        "fullName": "RC - Remote-Controlled Car",
+        "slug": "rc-remote-controlled-car",
+        "type": "character",
+        "colors": ["emerald"],
+        "cost": 1,
+        "inkable": True,
+        "rarity": "uncommon",
+        "legality": ["core", "infinity"],
+        "strength": 3,
+        "willpower": 2,
+        "lore": 2,
+        "subtypes": ["Storyborn"],
+        "abilities": [],
+        "specialAbilities": [
+            {
+                "name": "LOW BATTERIES",
+                "slug": "low-batteries",
+                "effect": (
+                    "This character can't quest or challenge unless you pay 1 [INKCOST]. "
+                    "(You pay this cost each time.)"
+                ),
+            }
+        ],
+        "rulesText": (
+            "LOW BATTERIES This character can't quest or challenge unless you pay "
+            "1 [INKCOST]. (You pay this cost each time.)"
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/12-77.webp",
     },
 ]
 

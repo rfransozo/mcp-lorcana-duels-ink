@@ -16,36 +16,36 @@ from typing import Any, Optional
 from .cards import CardCatalog
 from .formatting import join_lines
 
-# Per-card capability flags seen in availableActions.cards[instanceId], mapped
-# onto the tool that performs them. Unknown flags are still surfaced (see
-# `extra_capabilities`) so a change on their side degrades rather than breaks.
-# Per-card capability flags from availableActions.cards[instanceId], mapped onto
-# the tool that performs them. Entries routed through duels_send_game_action
-# carry the action type too, because that tool takes action_type + payload
-# rather than a card argument.
 # Per-card capability flags from availableActions.cards[instanceId], mapped onto
 # the tool that performs them.
 #
 # Only flags actually observed on the wire are listed. Duels.ink reports
-# canInk, canPlay, canQuest, canChallenge and canSing (plus the non-actions
-# below); there is no canMove/canActivate/canBoost, so board actions such as
-# MOVE_TO_LOCATION are reached deliberately through duels_send_game_action
-# rather than advertised as legal moves we cannot construct correctly.
+# canInk, canPlay, canQuest, canChallenge, canSing and canMove (plus the
+# non-actions below). canMove only appears once you control a location, which
+# is why it went unnoticed for so long - a board without one never shows it.
+#
+# There is no top-level canActivate: activated abilities arrive as a separate
+# `activatedAbilities` list on the card, handled in _activated_moves.
 CAPABILITY_TOOLS = {
     "canInk": ("duels_ink_card", "Put this card into the inkwell"),
     "canPlay": ("duels_play_card", "Play this card"),
     "canQuest": ("duels_quest", "Quest with this character for lore"),
     "canChallenge": ("duels_challenge", "Challenge an opposing character"),
     "canSing": ("duels_play_card", "Sing this song using an exerted singer"),
+    "canMove": ("duels_send_game_action", "Move this character to one of your locations"),
 }
 
 HAND_CAPABILITIES = {"canInk", "canPlay", "canSing"}
-BOARD_CAPABILITIES = {"canQuest", "canChallenge"}
+BOARD_CAPABILITIES = {"canQuest", "canChallenge", "canMove"}
 
 # Flags that describe a property rather than an action the agent can take.
 # Observed set of booleans on a card entry: canAffordInkCost, canBeSinger,
-# canChallenge, canInk, canPlay, canQuest, canSing.
-NON_ACTION_FLAGS = {"canAffordInkCost", "canBeSinger"}
+# canChallenge, canInk, canPlay, canQuest, canSing, hasSingTogether.
+#
+# hasSingTogether says the song *has* the keyword, not that it can be sung
+# now - the engine reports it as true even with no singers on the board. The
+# actionable flag is canSing; this one is rendered as information instead.
+NON_ACTION_FLAGS = {"canAffordInkCost", "canBeSinger", "hasSingTogether"}
 
 
 async def _describe_card(
@@ -82,6 +82,28 @@ async def _describe_card(
         if rules:
             out["text"] = rules
 
+        # Keywords decide who may challenge whom, so they belong on the card
+        # line itself rather than buried in prose. "Resist" and "Singer" carry
+        # a value; "Evasive" and "Bodyguard" do not.
+        keywords = []
+        for ability in record.get("abilities") or []:
+            name = ability.get("ability") if isinstance(ability, dict) else None
+            if not name:
+                continue
+            value = ability.get("value")
+            keywords.append(f"{name} {value:+d}" if name == "Resist" and isinstance(value, int)
+                            else (f"{name} {value}" if value is not None else str(name)))
+        if keywords:
+            out["keywords"] = keywords
+
+        named = [
+            {"name": a.get("name"), "effect": a.get("effect")}
+            for a in record.get("specialAbilities") or []
+            if isinstance(a, dict) and a.get("name")
+        ]
+        if named:
+            out["named_abilities"] = named
+
     if card.get("damage"):
         out["damage"] = card["damage"]
         if record and record.get("willpower") is not None:
@@ -99,13 +121,39 @@ async def _describe_card(
         can = [k for k, v in actions.items() if v is True and k not in NON_ACTION_FLAGS]
         if can:
             out["can"] = can
-        blocked = actions.get("playBlockedReason")
+        # The engine explains every refusal, not just the unplayable ones:
+        # "Already inked this turn", "Ink dry (no Rush)". Only the play reason
+        # used to reach the agent, so the rest were rediscovered by failing.
+        blocked = next(
+            (
+                actions[k]
+                for k in ("playBlockedReason", "questBlockedReason",
+                          "challengeBlockedReason", "inkBlockedReason")
+                if actions.get(k)
+            ),
+            None,
+        )
         if blocked:
             out["blocked"] = blocked
+        abilities = [a for a in actions.get("activatedAbilities") or [] if a.get("name")]
+        if abilities:
+            out["activated_abilities"] = abilities
+        if actions.get("hasSingTogether"):
+            # How much singer cost is on the board against how much the song
+            # needs - the gap is what decides whether it is worth holding.
+            out["sing_together"] = {
+                "cost": actions.get("singTogetherCost"),
+                "available": actions.get("totalAvailableSingerCost") or 0,
+            }
         if actions.get("validSingers"):
             out["valid_singers"] = actions["validSingers"]
         if actions.get("validTargets"):
             out["valid_targets"] = actions["validTargets"]
+        if actions.get("challengeTargetInfo"):
+            # Duels.ink resolves every possible challenge before we ask: who
+            # dies, how much damage lands, which keywords apply. Passing it
+            # through turns "pick an opposing character" into a real choice.
+            out["challenge_targets"] = actions["challengeTargetInfo"]
 
     return out
 
@@ -124,7 +172,60 @@ async def _describe_zone(
     return out
 
 
-def _legal_moves(game: dict, described_hand: list[dict], described_field: list[dict]) -> list[dict]:
+def _challenge_outcome(info: dict, target: str) -> str:
+    """One line saying what this challenge actually does to both sides."""
+    to_them = info.get("damageToTarget")
+    to_me = info.get("damageToAttacker")
+    them = f"deals {to_them}" if to_them is not None else "deals damage"
+    if info.get("willBanishTarget"):
+        them += ", banishing it"
+    mine = f"takes {to_me} back" if to_me is not None else "takes damage back"
+    if info.get("willBanishAttacker"):
+        mine += " and is banished"
+
+    notes = [k for k, flag in (
+        ("Bodyguard", "hasBodyguard"), ("Evasive", "hasEvasive"), ("Ward", "hasWard")
+    ) if info.get(flag)]
+    if info.get("isLocationTarget"):
+        notes.append("location")
+    suffix = f" [{', '.join(notes)}]" if notes else ""
+    return f"Challenge {target}: {them}; {mine}{suffix}"
+
+
+def _activated_moves(game_id: str, entries: list[dict]) -> list[dict]:
+    """One move per activated ability that can be used right now.
+
+    These never appear as a `can` flag - they arrive as a structured list on
+    the card, with the costs already worked out by the engine.
+    """
+    moves = []
+    for entry in entries:
+        for ability in entry.get("activated_abilities") or []:
+            if not ability.get("canActivate"):
+                continue
+            moves.append(
+                {
+                    "tool": "duels_send_game_action",
+                    "why": f"Activate {ability['name']} on {entry['card']}",
+                    "args": {
+                        "game_id": game_id,
+                        "action_type": "ACTIVATE_ABILITY",
+                        "payload": {
+                            "cardInstanceId": entry["instance_id"],
+                            "abilityName": ability["name"],
+                        },
+                    },
+                }
+            )
+    return moves
+
+
+def _legal_moves(
+    game: dict,
+    described_hand: list[dict],
+    described_field: list[dict],
+    opponent_names: Optional[dict] = None,
+) -> list[dict]:
     """Build the concrete list of callable moves for the current position.
 
     This is phase-aware on purpose. `availableActions` is populated even during
@@ -215,7 +316,6 @@ def _legal_moves(game: dict, described_hand: list[dict], described_field: list[d
         return []
 
     # --- Normal play ------------------------------------------------
-    # --- Normal play ------------------------------------------------
     for entries, allowed in (
         (described_hand, HAND_CAPABILITIES),
         (described_field, BOARD_CAPABILITIES),
@@ -252,8 +352,51 @@ def _legal_moves(game: dict, described_hand: list[dict], described_field: list[d
                     continue
 
                 tool, why = mapped
+                if flag == "canMove":
+                    for loc in [e for e in described_field if e.get("type") == "location"]:
+                        moves.append(
+                            {
+                                "tool": tool,
+                                "why": f"Move {entry['card']} to {loc['card']}",
+                                "args": {
+                                    "game_id": game_id,
+                                    "action_type": "MOVE_TO_LOCATION",
+                                    "payload": {
+                                        "characterInstanceId": entry["instance_id"],
+                                        "locationInstanceId": loc["instance_id"],
+                                    },
+                                },
+                            }
+                        )
+                    continue
+
                 if flag == "canChallenge":
-                    # duels_challenge names its arguments differently.
+                    # duels_challenge names its arguments differently. When the
+                    # engine sent the per-target maths, offer each target as its
+                    # own move with the outcome spelled out; otherwise fall back
+                    # to the placeholder so nothing is silently lost.
+                    targets = entry.get("challenge_targets") or []
+                    if targets:
+                        for info in targets:
+                            target_id = info.get("instanceId")
+                            if not target_id:
+                                continue
+                            name = (opponent_names or {}).get(target_id, target_id)
+                            moves.append(
+                                {
+                                    "tool": tool,
+                                    "why": (
+                                        f"{_challenge_outcome(info, name)}"
+                                        f" - with {entry['card']}"
+                                    ),
+                                    "args": {
+                                        "game_id": game_id,
+                                        "attacker_instance_id": entry["instance_id"],
+                                        "target_instance_id": target_id,
+                                    },
+                                }
+                            )
+                        continue
                     args: dict[str, Any] = {
                         "game_id": game_id,
                         "attacker_instance_id": entry["instance_id"],
@@ -262,9 +405,19 @@ def _legal_moves(game: dict, described_hand: list[dict], described_field: list[d
                 else:
                     args = {"game_id": game_id, "card_instance_id": entry["instance_id"]}
                     if flag == "canSing" and entry.get("valid_singers"):
-                        args["singer_instance_ids"] = entry["valid_singers"][:1]
+                        # Sing Together needs enough singers to cover the cost;
+                        # an ordinary song only ever needs one.
+                        together = entry.get("sing_together") or {}
+                        needed = together.get("cost")
+                        args["singer_instance_ids"] = (
+                            list(entry["valid_singers"])
+                            if needed is not None
+                            else entry["valid_singers"][:1]
+                        )
 
                 moves.append({"tool": tool, "why": f"{why}: {entry['card']}", "args": args})
+
+    moves.extend(_activated_moves(game_id, described_field))
 
     if available.get("canEndTurn"):
         moves.append(
@@ -325,6 +478,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "hand_count": len(me.get("hand") or []),
             "deck_count": me.get("deckCount"),
             "discard_count": len(me.get("discard") or []),
+            "discard": await _describe_zone(catalog, me.get("discard")),
             "hand": hand,
             "field": field,
             "items": items,
@@ -338,10 +492,20 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "hand_count": opponent.get("handCount"),
             "deck_count": opponent.get("deckCount"),
             "discard_count": len(opponent.get("discard") or []),
+            "discard": await _describe_zone(catalog, opponent.get("discard")),
             "field": opp_field,
             "items": opp_items,
         },
-        "legal_moves": _legal_moves(game, hand, [*field, *items]),
+        "legal_moves": _legal_moves(
+            game,
+            hand,
+            [*field, *items],
+            {
+                c["instance_id"]: c["card"]
+                for c in [*opp_field, *opp_items]
+                if c.get("instance_id") and c.get("card")
+            },
+        ),
     }
 
     if game.get("winner") is not None:
@@ -373,7 +537,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
 # -----------------------------------------------------------------
 # Markdown rendering
 # -----------------------------------------------------------------
-def _card_line(entry: dict, show_actions: bool = True) -> str:
+def _card_line(entry: dict, show_actions: bool = True, seen: Optional[set] = None) -> str:
     bits = [f"**{entry.get('card')}**"]
     stats = []
     if entry.get("cost") is not None:
@@ -400,6 +564,16 @@ def _card_line(entry: dict, show_actions: bool = True) -> str:
     if flags:
         bits.append(f"[{', '.join(flags)}]")
 
+    if entry.get("keywords"):
+        bits.append("{" + ", ".join(entry["keywords"]) + "}")
+
+    together = entry.get("sing_together")
+    if together and together.get("cost") is not None:
+        bits.append(
+            f"[Sing Together {together['cost']} - "
+            f"singers ready {together.get('available', 0)}/{together['cost']}]"
+        )
+
     if show_actions:
         if entry.get("can"):
             bits.append(f"-> can: {', '.join(entry['can'])}")
@@ -409,7 +583,57 @@ def _card_line(entry: dict, show_actions: bool = True) -> str:
     line = f"- {' '.join(bits)}"
     if entry.get("instance_id"):
         line += f"\n  `{entry['instance_id']}`"
+
+    NEWLINE = chr(10)
+    for ability in entry.get("activated_abilities") or []:
+        costs = []
+        if ability.get("inkCost"):
+            costs.append(f"{ability['inkCost']} ink")
+        if ability.get("exertCost"):
+            costs.append("exert")
+        if ability.get("banishCost"):
+            costs.append("banish")
+        if ability.get("discardCost"):
+            costs.append(f"discard {ability['discardCost']}")
+        cost = f" ({', '.join(costs)})" if costs else ""
+        state = "ready" if ability.get("canActivate") else (
+            ability.get("blockedReason") or "not available")
+        line += NEWLINE + f"  [activate] {ability['name']}{cost} - {state}"
+
+    for ability in entry.get("named_abilities") or []:
+        if ability.get("name"):
+            line += "\n  **" + str(ability["name"]) + "**"
+
+    # Rules text. Two copies of the same card carry identical text, so it is
+    # printed once per state and later copies point back at it - no information
+    # is lost and the duplication is cut.
+    text = entry.get("text")
+    if text:
+        definition_id = entry.get("definition_id")
+        if seen is not None and definition_id in seen:
+            line += "\n  _(text above)_"
+        else:
+            if seen is not None and definition_id:
+                seen.add(definition_id)
+            for paragraph in str(text).split("\n"):
+                if paragraph.strip():
+                    line += f"\n  {paragraph.strip()}"
     return line
+
+
+def _discard_line(entries: list[dict]) -> str:
+    """One compact line for a discard pile, grouped by card with counts.
+
+    A discard grows all game and the cards in it can no longer act, so what
+    matters is which cards have been spent - not one line per instance.
+    """
+    counts: dict[str, int] = {}
+    for entry in entries:
+        name = entry.get("card") or entry.get("definition_id") or "?"
+        counts[name] = counts.get(name, 0) + 1
+    return ", ".join(
+        f"{count}x {name}" for name, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
 
 
 def game_state_markdown(payload: dict) -> str:
@@ -449,24 +673,41 @@ def game_state_markdown(payload: dict) -> str:
     if payload.get("mulligan"):
         header.append(f"## Mulligan\n{payload['mulligan']}\n")
 
+    # Shared across every zone so a card's rules text is printed once per state.
+    seen: set = set()
+
     sections = []
     if me.get("field"):
         sections.append(
-            "## Your board\n" + "\n".join(_card_line(c) for c in me["field"])
+            "## Your board\n" + "\n".join(_card_line(c, seen=seen) for c in me["field"])
         )
     if me.get("items"):
-        sections.append("## Your items/locations\n" + "\n".join(_card_line(c) for c in me["items"]))
+        sections.append(
+            "## Your items/locations\n"
+            + "\n".join(_card_line(c, seen=seen) for c in me["items"])
+        )
     if opp.get("field"):
         sections.append(
-            "## Opponent board\n" + "\n".join(_card_line(c, show_actions=False) for c in opp["field"])
+            "## Opponent board\n"
+            + "\n".join(_card_line(c, show_actions=False, seen=seen) for c in opp["field"])
         )
     if opp.get("items"):
         sections.append(
             "## Opponent items/locations\n"
-            + "\n".join(_card_line(c, show_actions=False) for c in opp["items"])
+            + "\n".join(_card_line(c, show_actions=False, seen=seen) for c in opp["items"])
         )
     if me.get("hand"):
-        sections.append("## Your hand\n" + "\n".join(_card_line(c) for c in me["hand"]))
+        sections.append("## Your hand\n" + "\n".join(_card_line(c, seen=seen) for c in me["hand"]))
+
+    # Discards last: they inform what has been spent, but nothing in them acts.
+    if me.get("discard"):
+        sections.append(
+            f"## Discard - you ({len(me['discard'])})\n" + _discard_line(me["discard"])
+        )
+    if opp.get("discard"):
+        sections.append(
+            f"## Discard - opponent ({len(opp['discard'])})\n" + _discard_line(opp["discard"])
+        )
 
     moves = payload.get("legal_moves") or []
     if moves:

@@ -67,6 +67,9 @@ SELECT_CARD = {
     "required": True,
     "minSelect": 1,
     "maxSelect": 1,
+    # The engine lists the choices under cardInstanceIds, and expects the
+    # answer under that same key - see TestPrompts.test_select_card_*.
+    "cardInstanceIds": ["inst-hand-song"],
 }
 
 SELECT_NUMERIC = {

@@ -24,16 +24,24 @@ def tools_offered(payload: dict) -> set[str]:
 
 class TestCapabilityMap:
     def test_only_observed_flags_are_mapped(self):
-        """Regression: canMove, canBoost and canActivate were once mapped here
-        but do not exist in the Duels.ink client at all. Emitting moves for
-        invented flags produced actions the server rejected."""
+        """Every mapped flag has been seen on the wire, and only those.
+
+        canBoost and canActivate were once mapped from guesswork and had to go:
+        the server rejected the actions they produced. canMove went the other
+        way - it was removed as invented, then turned up in a live game the
+        moment a location was in play. A board without a location never reports
+        it, which is why it stayed hidden through every earlier test.
+        """
         assert set(CAPABILITY_TOOLS) == {
             "canInk",
             "canPlay",
             "canQuest",
             "canChallenge",
             "canSing",
+            "canMove",
         }
+        assert "canBoost" not in CAPABILITY_TOOLS
+        assert "canActivate" not in CAPABILITY_TOOLS
 
     def test_zones_partition_the_mapped_flags(self):
         assert HAND_CAPABILITIES | BOARD_CAPABILITIES == set(CAPABILITY_TOOLS)
@@ -261,3 +269,257 @@ class TestMarkdown:
         bare = {"id": games.GAME_ID, "status": "playing", "viewingAs": 1, "currentPlayer": 1}
         payload = await render_game_state(bare, catalog)
         assert game_state_markdown(payload).strip()
+
+
+class TestCardText:
+    """Regressions for the three blind spots that lost the measured game.
+
+    The whole game was played in markdown, and `_card_line` rendered name,
+    stats and flags but never the rules text. Three concrete costs: the RC's
+    LOW BATTERIES was discovered by failing, Squeaks was treated as a wall
+    without noticing Evasive, and the opponent's Pete was never read at all.
+    """
+
+    async def test_keywords_are_shown_on_the_card_line(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["hand"].append(games.card("kw-1", "10-103"))  # Mushu, Rush
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "{Rush}" in text
+
+    async def test_keyword_values_are_rendered(self, catalog):
+        """Resist and Singer carry a value; Evasive does not."""
+        game = games.playing()
+        game["myPlayer"]["hand"].append(games.card("kw-2", "7-11"))  # Troubadour
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Resist +1" in text and "Singer 4" in text
+
+    async def test_named_ability_is_shown(self, catalog):
+        """Regression: the RC's LOW BATTERIES was invisible, so the ink it
+        needs to quest was discovered only by the action being rejected."""
+        game = games.playing()
+        game["myPlayer"]["hand"].append(games.card("rc-1", "12-77"))
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "LOW BATTERIES" in text
+        assert "pay 1" in text
+
+    async def test_rules_text_is_shown_for_hand_cards(self, catalog):
+        text = game_state_markdown(await render_game_state(games.playing(), catalog))
+        assert "Evasive (Only characters with Evasive can challenge" in text
+
+    async def test_rules_text_is_shown_for_opponent_cards(self, catalog):
+        """Regression: the opponent's Pete cancels actions, which would have
+        countered a removal spell. It was never visible."""
+        text = game_state_markdown(await render_game_state(games.playing(), catalog))
+        assert "BLOW THE WHISTLE" in text
+
+    async def test_duplicate_card_text_is_printed_once(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["hand"].append(games.card("dup-1", "10-71"))
+        game["myPlayer"]["hand"].append(games.card("dup-2", "10-71"))
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert text.count("Only characters with Evasive can challenge") == 1
+        assert "_(text above)_" in text
+
+    async def test_card_without_abilities_does_not_break(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["hand"] = [games.card("plain-1", "12-133")]  # Dangerous Plan
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Dangerous Plan" in text
+        assert "{" not in text.split("## Your hand")[1].split("\n")[1]
+
+    async def test_unknown_card_id_does_not_break(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["hand"] = [games.card("ghost-1", "99-999")]
+        assert game_state_markdown(await render_game_state(game, catalog)).strip()
+
+
+class TestLocationsAndActivatedAbilities:
+    """Regressions from the first game played with locations and items.
+
+    Two blind spots surfaced at once. `canMove` had been removed from the
+    capability map as invented, but it is real - it simply never appears until
+    you control a location, so no earlier board produced it. And activated
+    abilities never arrive as a `can` flag at all: they come as a structured
+    `activatedAbilities` list, with the costs already resolved, which the
+    renderer dropped on the floor. An item sitting there ready to use looked
+    identical to one that could do nothing.
+    """
+
+    @staticmethod
+    def _ability(**over):
+        base = {
+            "name": "HAUNTING PRESENCE",
+            "inkCost": 0,
+            "exertCost": True,
+            "banishCost": False,
+            "discardCost": 0,
+            "canActivate": True,
+        }
+        base.update(over)
+        return base
+
+    async def test_can_move_offers_each_location(self, catalog):
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_ELSA]["canMove"] = True
+        payload = await render_game_state(game, catalog)
+        moves = [m for m in payload["legal_moves"]
+                 if m["args"].get("action_type") == "MOVE_TO_LOCATION"]
+        assert len(moves) == 1
+        assert moves[0]["args"]["payload"] == {
+            "characterInstanceId": games.FIELD_ELSA,
+            "locationInstanceId": games.LOCATION_CORONA,
+        }
+
+    async def test_can_move_is_not_reported_as_unmapped(self, catalog):
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_ELSA]["canMove"] = True
+        payload = await render_game_state(game, catalog)
+        assert not [m for m in payload["legal_moves"] if "canMove" in m["why"]]
+
+    async def test_activatable_ability_becomes_a_move(self, catalog):
+        game = games.playing()
+        game["availableActions"]["cards"][games.LOCATION_CORONA] = {
+            "activatedAbilities": [self._ability()]
+        }
+        payload = await render_game_state(game, catalog)
+        move = next(m for m in payload["legal_moves"]
+                    if m["args"].get("action_type") == "ACTIVATE_ABILITY")
+        assert move["args"]["payload"] == {
+            "cardInstanceId": games.LOCATION_CORONA,
+            "abilityName": "HAUNTING PRESENCE",
+        }
+
+    async def test_blocked_ability_is_shown_but_not_offered(self, catalog):
+        """It still has to be visible - knowing an ability exists and costs 3
+        ink is what tells you to hold the ink for it."""
+        game = games.playing()
+        game["availableActions"]["cards"][games.LOCATION_CORONA] = {
+            "activatedAbilities": [
+                self._ability(name="OUT OF SIGHT", inkCost=3, exertCost=False,
+                              canActivate=False, blockedReason="Not enough ink (need 3)")
+            ]
+        }
+        payload = await render_game_state(game, catalog)
+        assert not [m for m in payload["legal_moves"]
+                    if m["args"].get("action_type") == "ACTIVATE_ABILITY"]
+        text = game_state_markdown(payload)
+        assert "OUT OF SIGHT" in text and "3 ink" in text
+        assert "Not enough ink (need 3)" in text
+
+    async def test_non_play_blocked_reasons_reach_the_agent(self, catalog):
+        """Only playBlockedReason used to be surfaced, so "Already inked this
+        turn" and "Ink dry (no Rush)" were rediscovered by being refused."""
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_RAPUNZEL]["questBlockedReason"] = (
+            "Ink dry (no Rush)"
+        )
+        payload = await render_game_state(game, catalog)
+        rapunzel = next(c for c in payload["me"]["field"]
+                        if c["instance_id"] == games.FIELD_RAPUNZEL)
+        assert rapunzel["blocked"] == "Ink dry (no Rush)"
+
+
+class TestSingTogether:
+    """Regression from a live game with a Sing Together song in hand.
+
+    `hasSingTogether` reads like a capability but is a property of the card:
+    the engine reports it true from turn one, with no singers on the board and
+    `canSing` false. Treated as an action it produced a legal move that did
+    not exist - the same class of mistake as advertising a canMove the bundle
+    never sends. It belongs with the descriptive flags, and the numbers that
+    come with it (singTogetherCost, totalAvailableSingerCost) are what a
+    player actually needs.
+    """
+
+    @staticmethod
+    def _song(game: dict, **actions: object) -> dict:
+        """Turn the fixture song into a Sing Together song."""
+        entry = game["availableActions"]["cards"][games.HAND_SONG]
+        entry.update(
+            {
+                "hasSingTogether": True,
+                "singTogetherCost": 6,
+                "totalAvailableSingerCost": 0,
+                "canSing": False,
+                "validSingers": [],
+            }
+        )
+        entry.update(actions)
+        return game
+
+    async def test_it_never_becomes_a_legal_move(self, catalog):
+        payload = await render_game_state(self._song(games.playing()), catalog)
+        assert not [m for m in payload["legal_moves"] if "hasSingTogether" in m["why"]]
+
+    async def test_it_is_not_listed_as_a_capability(self, catalog):
+        payload = await render_game_state(self._song(games.playing()), catalog)
+        song = next(c for c in payload["me"]["hand"] if c["instance_id"] == games.HAND_SONG)
+        assert "hasSingTogether" not in song.get("can", [])
+
+    async def test_the_cost_and_the_progress_are_reported(self, catalog):
+        game = self._song(games.playing(), totalAvailableSingerCost=4)
+        payload = await render_game_state(game, catalog)
+        song = next(c for c in payload["me"]["hand"] if c["instance_id"] == games.HAND_SONG)
+        assert song["sing_together"] == {"cost": 6, "available": 4}
+
+    async def test_the_progress_reaches_the_markdown(self, catalog):
+        game = self._song(games.playing(), totalAvailableSingerCost=4)
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Sing Together 6 - singers ready 4/6" in text
+
+    async def test_singing_together_offers_every_singer(self, catalog):
+        """One singer is enough for an ordinary song and never enough for this
+        one, so the suggested move has to carry all of them."""
+        game = self._song(
+            games.playing(),
+            canSing=True,
+            validSingers=[games.FIELD_ELSA, games.FIELD_RAPUNZEL],
+            totalAvailableSingerCost=6,
+        )
+        payload = await render_game_state(game, catalog)
+        sing = next(
+            m for m in payload["legal_moves"]
+            if m["tool"] == "duels_play_card"
+            and m["args"].get("card_instance_id") == games.HAND_SONG
+        )
+        assert sing["args"]["singer_instance_ids"] == [games.FIELD_ELSA, games.FIELD_RAPUNZEL]
+
+    async def test_an_ordinary_song_still_exerts_only_one_singer(self, catalog):
+        """Guard on the other side: no Sing Together means no over-exerting."""
+        payload = await render_game_state(games.playing(), catalog)
+        sing = next(
+            m for m in payload["legal_moves"]
+            if m["tool"] == "duels_play_card"
+            and m["args"].get("card_instance_id") == games.HAND_SONG
+        )
+        assert sing["args"]["singer_instance_ids"] == [games.FIELD_ELSA]
+
+
+class TestDiscard:
+    async def test_discard_contents_are_exposed(self, catalog):
+        """Regression: the discard was a bare count, so a board wipe told you
+        that something happened but never what did it."""
+        payload = await render_game_state(games.playing(), catalog)
+        names = {c["card"] for c in payload["me"]["discard"]}
+        assert "Mushu - Stealthy Dragon" in names
+
+    async def test_discard_is_grouped_with_counts(self, catalog):
+        text = game_state_markdown(await render_game_state(games.playing(), catalog))
+        assert "2x Mushu - Stealthy Dragon" in text
+
+    async def test_both_discards_are_reported(self, catalog):
+        text = game_state_markdown(await render_game_state(games.playing(), catalog))
+        assert "Discard - you" in text and "Discard - opponent" in text
+
+    async def test_count_still_matches_the_list(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["me"]["discard_count"] == len(payload["me"]["discard"])
+
+    async def test_empty_discard_adds_no_section(self, catalog):
+        """The scoreboard always has a Discard column; the section should only
+        appear when there is something in the pile."""
+        game = games.playing()
+        game["myPlayer"]["discard"] = []
+        game["opponent"]["discard"] = []
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "## Discard" not in text

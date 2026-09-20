@@ -891,7 +891,10 @@ async def duels_respond_to_prompt(
                 "This is a select_card prompt - pass selected_card_ids. "
                 + _prompt_options(prompt)
             )
-        response.update({"type": "select_card", "selectedCardIds": selected_card_ids})
+        # The wire key is cardInstanceIds, which is also how the prompt lists
+        # its own options. Sending selectedCardIds - the key MULLIGAN uses -
+        # gets no acknowledgement at all, so the game hangs on the prompt.
+        response.update({"type": "select_card", "cardInstanceIds": selected_card_ids})
 
     elif ptype == "select_numeric":
         if numeric_value is None:
@@ -907,7 +910,7 @@ async def duels_respond_to_prompt(
         if target_instance_ids:
             response["targetInstanceIds"] = target_instance_ids
         if selected_card_ids:
-            response["selectedCardIds"] = selected_card_ids
+            response["cardInstanceIds"] = selected_card_ids
         if numeric_value is not None:
             response["numericValue"] = numeric_value
         if normalised in ("yes", "no"):
