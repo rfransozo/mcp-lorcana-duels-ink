@@ -54,6 +54,13 @@ class TestCapabilityMap:
         assert "canAffordInkCost" in NON_ACTION_FLAGS
         assert "canBeSinger" in NON_ACTION_FLAGS
 
+    def test_has_prefixed_flags_describe_the_card(self):
+        """hasSingTogether and hasQuestAbility both turned up advertised as
+        unmapped capabilities, each offering a move that did not exist -
+        hasQuestAbility on a Moana whose ink was still wet."""
+        assert "hasSingTogether" in NON_ACTION_FLAGS
+        assert "hasQuestAbility" in NON_ACTION_FLAGS
+
 
 class TestPhaseGates:
     async def test_coin_toss_offers_play_and_draw(self, catalog):

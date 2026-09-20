@@ -42,13 +42,19 @@ HAND_CAPABILITIES = {"canInk", "canPlay", "canSing"}
 BOARD_CAPABILITIES = {"canQuest", "canChallenge", "canMove", "canBoost"}
 
 # Flags that describe a property rather than an action the agent can take.
-# Observed set of booleans on a card entry: canAffordInkCost, canBeSinger,
-# canChallenge, canInk, canPlay, canQuest, canSing, hasSingTogether.
 #
-# hasSingTogether says the song *has* the keyword, not that it can be sung
-# now - the engine reports it as true even with no singers on the board. The
-# actionable flag is canSing; this one is rendered as information instead.
-NON_ACTION_FLAGS = {"canAffordInkCost", "canBeSinger", "hasSingTogether"}
+# Everything with a `has` prefix describes the card. hasSingTogether says the
+# song carries the keyword - reported true from turn one, with no singers on
+# the board. hasQuestAbility says questing will trigger something, and shows
+# up on a character whose ink is still wet and which therefore cannot quest at
+# all. Both were once advertised as unmapped capabilities, each offering a
+# move that did not exist. The actionable flags are canSing and canQuest.
+NON_ACTION_FLAGS = {
+    "canAffordInkCost",
+    "canBeSinger",
+    "hasSingTogether",
+    "hasQuestAbility",
+}
 
 
 async def _describe_card(
