@@ -16,3 +16,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Config local do Claude Code (caminhos absolutos desta máquina)
+.mcp.json

@@ -59,3 +59,75 @@ fails. All seven known defects are covered.
 They live in `[project.optional-dependencies] dev` in `pyproject.toml`.
 `requirements.txt` deliberately stays at the five runtime dependencies, because
 that is the file MCPize installs during the Cloud Run build.
+
+---
+
+# Running it locally in Claude Code
+
+To use the server from this repo instead of the deployed MCPize one — handy for
+testing a change before it ships.
+
+## Setup
+
+The venv lives **outside** the repo on purpose. This folder is synced by Google
+Drive, and a `desktop.ini` landing inside `site-packages` breaks
+`jsonschema_specifications`, which takes FastMCP down with it. Keeping it out
+also spares Drive from syncing thousands of package files.
+
+```bash
+python -m venv C:/venvs/mcp-lorcana-duels-ink
+```
+
+```bash
+C:/venvs/mcp-lorcana-duels-ink/Scripts/python.exe -m pip install -r requirements.txt
+```
+
+## Wiring
+
+`.mcp.json` at the repo root registers the server for this project:
+
+```json
+{
+  "mcpServers": {
+    "duels": {
+      "command": "C:\venvs\mcp-lorcana-duels-ink\Scripts\python.exe",
+      "args": ["<absolute path>\src\server.py"],
+      "env": {}
+    }
+  }
+}
+```
+
+It is **gitignored** — both paths are absolute and specific to one machine.
+
+Claude Code asks for approval the first time it starts a project-scoped server.
+Restart the session (or reconnect) after creating the file.
+
+## Using your own account
+
+Anonymous mode works out of the box: bot games, the card catalog and public
+decks. To unlock your decks, ranked play, tables, friends and history, put your
+cookie in the `env` block:
+
+```json
+"env": { "DUELS_SESSION_COOKIE": "<__Secure-better-auth.session_token value>" }
+```
+
+The README's Getting Started has the click-by-click for finding it. Since
+`.mcp.json` is gitignored, the cookie never reaches the repo — but it is
+plain text on disk, so treat it like any other credential.
+
+## Checking it works
+
+Without starting Claude Code, this speaks the same protocol the client does:
+
+```bash
+C:/venvs/mcp-lorcana-duels-ink/Scripts/python.exe src/server.py
+```
+
+It waits on stdin. A clean run prints nothing to stdout — stdout is the
+JSON-RPC channel, and anything else on it corrupts the protocol. Startup logs
+go to stderr by design.
+
+Once connected, `duels_whoami` is the fastest check: it reports whether a
+cookie was accepted and which Duels.ink build the server is talking to.
