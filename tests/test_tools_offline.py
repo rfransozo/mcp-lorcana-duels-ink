@@ -581,3 +581,49 @@ class TestDeckTracker:
         )
         assert "Still in your deck" in text
         assert "Opponent has shown" in text
+
+
+class TestWhenAnActionIsRejected:
+    """A rejection usually means the position moved, not that the caller
+    reasoned badly.
+
+    In a live game a state read moments earlier had already advanced from the
+    coin toss into the mulligan, and CHOOSE_STARTING_PLAYER came back with
+    "Game is in mulligan phase" and nothing else - no way to act without
+    fetching the state again. Against a person that extra round trip is spent
+    off a two-minute clock, so the corrected picture travels with the error.
+    """
+
+    async def _rejected(self, router, mcp_client, **kwargs):
+        async with FakeGameServer(accept=False) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token", {"token": "t", "wsUrl": server.url}
+            )
+            text = await call_text(
+                mcp_client,
+                "duels_ink_card",
+                game_id=games.GAME_ID,
+                card_instance_id=games.HAND_MUSHU,
+                **kwargs,
+            )
+            return server, text
+
+    async def test_the_servers_own_reason_survives(self, router, mcp_client):
+        _server, text = await self._rejected(router, mcp_client)
+        assert text.startswith("Error:")
+        assert "Not enough ink" in text
+
+    async def test_the_error_carries_what_is_playable_now(self, router, mcp_client):
+        _server, text = await self._rejected(router, mcp_client)
+        assert "Legal moves right now" in text
+        assert "duels_" in text, "the moves have to be callable, not prose"
+
+    async def test_the_error_names_the_phase_it_actually_found(self, router, mcp_client):
+        """Naming the phase is the part that explains the rejection."""
+        _server, text = await self._rejected(router, mcp_client)
+        assert "status playing" in text and "turn " in text
+
+    async def test_one_rejection_sends_exactly_one_action(self, router, mcp_client):
+        """The recovery re-reads state; it must not re-send the move."""
+        server, _text = await self._rejected(router, mcp_client)
+        assert len(server.received) == 1

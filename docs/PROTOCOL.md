@@ -252,23 +252,33 @@ and `validSingers` fills; the song is then played with `PLAY_CARD` carrying
 
 ## The clock (human games only)
 
-Games against people are timed; bot games are not. `roomView.timerPreset` says
-which - `"none"` in every bot game seen so far. Nothing in `gameState` carries a
-countdown, so the only evidence of the clock is the game log:
+Games against people are timed and bot games are not. The live clock is in
+`gameState.timerView`:
 
+```json
+{"myTimeRemainingMs": 114623, "opponentTimeRemainingMs": 120000,
+ "serverTimestamp": 1789944585109,
+ "myTimerTicking": false, "opponentTimerTicking": false}
 ```
-[P2] Your timer started (2:00)
-[P1] Opponent gained 45 seconds (turn end)
+
+It is a chess clock: two minutes a turn, with about 45 seconds credited back on
+ending one, and running out loses the game. `roomView.timerPreset` names the
+setting and is `"none"` in bot games.
+
+`turnGateState` is *not* this. It holds per-turn counters - whether the ink for
+the turn has been used, what has been played - and carries no time at all.
+
+The game log narrates the same clock, with the numbers under `data`:
+
+```json
+{"type": "TIMER_STARTED",   "player": 2, "data": {"timeRemainingMs": 120000},
+ "message": "Your timer started (2:00)"}
+{"type": "TIMER_INCREMENT", "player": 2, "message": "You gained 45 seconds (turn end)"}
 ```
 
-So it is a chess clock: a per-turn budget, observed at two minutes, plus about
-45 seconds credited back when a turn is ended. `turnGateState` is *not* this -
-it holds per-turn counters (inked yet, cards played) and says nothing about
-time.
-
-The practical consequence is that a caller cannot see its own clock from the
-state at all, and a slow turn can lose a won game without any warning. Reading
-the tail of the log is the only way to check.
+Use `timerView` rather than these: it is the current value, while the log is a
+record of events. Every log entry also carries `id`, `timestamp`, `turnNumber`
+and a `data` object that `duels_get_game_log` does not surface.
 
 ## Game log
 

@@ -15,7 +15,7 @@ from ..client import DuelsError
 from ..formatting import as_json, join_lines, render
 from ..gamews import GameConnection
 from ..models import CardInstanceId, GameId, Limit, ResponseFmt, ResponseFormat, SkipTriggers
-from ..render import game_state_markdown, render_game_state
+from ..render import game_state_markdown, legal_moves_markdown, render_game_state
 from ..toolkit import progress, tool_errors
 
 # Response `type` to use for each prompt `type`. Triggers are the exception:
@@ -49,6 +49,34 @@ async def _state_reply(
         return f"{headline}\n\n{body}" if headline else body
 
     return render(payload, response_format, md)
+
+
+async def _send(app: AppContext, conn: GameConnection, action: dict) -> None:
+    """Send one action, and on rejection answer with what is actually playable.
+
+    A rejection usually means the position moved while the caller was deciding
+    rather than that the caller reasoned badly. In a live game a state read a
+    moment earlier had already advanced from the coin toss into the mulligan,
+    and the rejection could only say so - not say what to do instead.
+
+    Sending the caller away to re-read costs a whole round trip, and against a
+    person that round trip is spent off a two-minute clock, so the corrected
+    picture rides along with the error. If the refresh itself fails there is
+    nothing better to offer and the original rejection stands alone.
+    """
+    try:
+        await conn.send_action(action)
+    except DuelsError as rejection:
+        try:
+            game = await conn.refresh()
+            payload = await render_game_state(game, app.catalog)
+        except Exception:
+            raise rejection from None
+        raise DuelsError(
+            f"{rejection}\n\nThe position has moved on - this is it now "
+            f"(status {payload.get('status')}, turn {payload.get('turn_number')}):"
+            f"\n{legal_moves_markdown(payload)}"
+        ) from None
 
 
 def _prompt_options(prompt: dict) -> str:
@@ -451,7 +479,7 @@ async def duels_ink_card(
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
-    await conn.send_action({"type": "ADD_TO_INK", "cardInstanceId": card_instance_id})
+    await _send(app, conn, {"type": "ADD_TO_INK", "cardInstanceId": card_instance_id})
     return await _state_reply(app, conn, response_format, "Inked a card.")
 
 
@@ -550,7 +578,7 @@ async def duels_play_card(
     if skip_optional_triggers:
         action["skipNonMandatoryTriggers"] = True
 
-    await conn.send_action(action)
+    await _send(app, conn, action)
     return await _state_reply(app, conn, response_format, "Played a card.")
 
 
@@ -601,7 +629,7 @@ async def duels_quest(
     action: dict[str, Any] = {"type": "QUEST", "cardInstanceId": card_instance_id}
     if skip_optional_triggers:
         action["skipNonMandatoryTriggers"] = True
-    await conn.send_action(action)
+    await _send(app, conn, action)
     return await _state_reply(app, conn, response_format, "Quested for lore.")
 
 
@@ -668,7 +696,9 @@ async def duels_challenge(
     """
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
-    await conn.send_action(
+    await _send(
+        app,
+        conn,
         {
             "type": "ATTACK",
             "attackerInstanceId": attacker_instance_id,
@@ -723,7 +753,9 @@ async def duels_end_turn(
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
     game = await conn.refresh()
-    await conn.send_action(
+    await _send(
+        app,
+        conn,
         {
             "type": "END_TURN",
             "expectedTurnNumber": game.get("turnNumber"),
@@ -950,7 +982,7 @@ async def duels_respond_to_prompt(
         if normalised in ("yes", "no"):
             response["value"] = normalised == "yes"
 
-    await conn.send_action({"type": "RESPOND_TO_PROMPT", "response": response})
+    await _send(app, conn, {"type": "RESPOND_TO_PROMPT", "response": response})
     return await _state_reply(app, conn, response_format, f"Answered the {ptype} prompt.")
 
 
@@ -1037,7 +1069,7 @@ async def duels_send_game_action(
     app = app_ctx(ctx)
     conn = await _conn(app, game_id)
     action = {"type": action_type.strip().upper(), **(payload or {})}
-    await conn.send_action(action)
+    await _send(app, conn, action)
     if action["type"] in ("ABANDON_BOT_GAME", "CONCEDE"):
         result = await _state_reply(app, conn, response_format, f"Sent {action['type']}.")
         await app.games.drop(game_id)
@@ -1097,7 +1129,7 @@ async def duels_concede(
         return result
 
     action = "ABANDON_BOT_GAME" if game.get("isBotGame") else "CONCEDE"
-    await conn.send_action({"type": action})
+    await _send(app, conn, {"type": action})
     result = await _state_reply(app, conn, response_format, f"Game ended ({action}).")
     await app.games.drop(game_id)
     return result

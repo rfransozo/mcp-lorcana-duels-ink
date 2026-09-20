@@ -498,6 +498,44 @@ def _legal_moves(
     return moves
 
 
+LOW_CLOCK_MS = 30_000
+
+
+def _mmss(ms: object) -> str:
+    """Milliseconds as m:ss, floored, never negative."""
+    try:
+        seconds = max(0, int(ms) // 1000)
+    except (TypeError, ValueError):
+        return "?"
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _clock(game: dict) -> Optional[dict]:
+    """The per-turn chess clock, which only games against people have.
+
+    Those games are timed - two minutes a turn, with about 45 seconds credited
+    back on ending one - and running out loses the game. Bot games are not.
+    None of this is in `availableActions`, nor in `turnGateState`, which holds
+    per-turn counters and no time at all; it lives in `timerView`. Until this
+    was read the caller could not see its own clock, which is how a game was
+    played to 15-21 with no warning that a clock existed.
+
+    Both fields are read defensively: whether an untimed game omits `timerView`
+    or carries it full of nulls, the answer is the same - no clock to show.
+    """
+    view = game.get("timerView") or {}
+    mine = view.get("myTimeRemainingMs")
+    theirs = view.get("opponentTimeRemainingMs")
+    if mine is None and theirs is None:
+        return None
+    return {
+        "my_ms": mine,
+        "opponent_ms": theirs,
+        "my_clock_running": bool(view.get("myTimerTicking")),
+        "opponent_clock_running": bool(view.get("opponentTimerTicking")),
+    }
+
+
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     """Produce the compact, agent-facing view of a game state."""
     me = game.get("myPlayer") or {}
@@ -522,6 +560,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "my_turn": viewing_as is not None and viewing_as == current,
         "state_version": game.get("stateVersion"),
         "is_bot_game": game.get("isBotGame"),
+        "clock": _clock(game),
         "me": {
             "lore": me.get("lore"),
             "ink_available": available.get("availableInk"),
@@ -719,6 +758,24 @@ def game_state_markdown(payload: dict) -> str:
         "",
     ]
 
+    clock = payload.get("clock")
+    if clock:
+        line = (
+            f"**Clock** - you {_mmss(clock.get('my_ms'))} - "
+            f"opponent {_mmss(clock.get('opponent_ms'))}"
+        )
+        if clock.get("my_clock_running"):
+            mine = clock.get("my_ms")
+            urgent = isinstance(mine, (int, float)) and mine <= LOW_CLOCK_MS
+            line += (
+                " - **your clock is running out and losing it loses the game**"
+                if urgent
+                else " - your clock is running"
+            )
+        elif clock.get("opponent_clock_running"):
+            line += " - opponent's clock is running"
+        header.extend([line, ""])
+
     if payload.get("winner") is not None:
         header.append(
             f"## Game over - {'you won' if payload.get('i_won') else 'you lost'} "
@@ -773,16 +830,23 @@ def game_state_markdown(payload: dict) -> str:
             f"## Discard - opponent ({len(opp['discard'])})\n" + _discard_line(opp["discard"])
         )
 
+    sections.append(legal_moves_markdown(payload))
+
+    return join_lines([*header, *sections])
+
+
+def legal_moves_markdown(payload: dict) -> str:
+    """Just the callable-moves block, for reuse outside the full state dump.
+
+    A rejected action needs to show what *is* playable, and that is this list.
+    """
     moves = payload.get("legal_moves") or []
-    if moves:
-        lines = ["## Legal moves right now"]
-        for m in moves:
-            lines.append(f"- {m['why']}\n  `{m['tool']}` with `{m['args']}`")
-        sections.append("\n".join(lines))
-    else:
-        sections.append(
+    if not moves:
+        return (
             "## Legal moves right now\nNone - it is not your turn, or the game is over. "
             "Use `duels_wait_for_my_turn` to block until it is your turn again."
         )
-
-    return join_lines([*header, *sections])
+    lines = ["## Legal moves right now"]
+    for m in moves:
+        lines.append(f"- {m['why']}\n  `{m['tool']}` with `{m['args']}`")
+    return "\n".join(lines)

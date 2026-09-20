@@ -577,3 +577,84 @@ class TestDiscard:
         game["opponent"]["discard"] = []
         text = game_state_markdown(await render_game_state(game, catalog))
         assert "## Discard" not in text
+
+
+class TestTheClock:
+    """Games against people are timed; nothing else in the state says so.
+
+    A won game was carried to 15-21 without the clock ever being visible.
+    `turnGateState` looks like it might hold this and does not - it counts
+    inks and cards played. The clock is `timerView`, and it is absent in bot
+    games, which are untimed.
+    """
+
+    def timed(self, **view):
+        game = games.playing()
+        return {**game, "timerView": {"serverTimestamp": 1789944585109, **view}}
+
+    async def test_a_bot_game_shows_no_clock(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["clock"] is None
+        assert "Clock" not in game_state_markdown(payload)
+
+    async def test_a_timerview_of_nulls_is_also_no_clock(self, catalog):
+        """Whether an untimed game omits timerView or sends it empty, the
+        answer is the same - do not print a clock that does not exist."""
+        payload = await render_game_state(
+            self.timed(myTimeRemainingMs=None, opponentTimeRemainingMs=None), catalog
+        )
+        assert payload["clock"] is None
+
+    async def test_both_clocks_are_shown(self, catalog):
+        payload = await render_game_state(
+            self.timed(myTimeRemainingMs=114623, opponentTimeRemainingMs=120000), catalog
+        )
+        assert payload["clock"]["my_ms"] == 114623
+        line = game_state_markdown(payload)
+        assert "you 1:54" in line and "opponent 2:00" in line
+
+    async def test_a_running_clock_says_so(self, catalog):
+        payload = await render_game_state(
+            self.timed(
+                myTimeRemainingMs=90000, opponentTimeRemainingMs=120000, myTimerTicking=True
+            ),
+            catalog,
+        )
+        assert payload["clock"]["my_clock_running"] is True
+        assert "your clock is running" in game_state_markdown(payload)
+
+    async def test_a_nearly_dead_clock_is_escalated(self, catalog):
+        """The whole point of showing it is the moment it matters."""
+        payload = await render_game_state(
+            self.timed(
+                myTimeRemainingMs=12000, opponentTimeRemainingMs=120000, myTimerTicking=True
+            ),
+            catalog,
+        )
+        text = game_state_markdown(payload)
+        assert "you 0:12" in text
+        assert "loses the game" in text
+
+    async def test_the_opponents_clock_is_not_escalated(self, catalog):
+        """Their clock running low is their problem, not an alarm for us."""
+        payload = await render_game_state(
+            self.timed(
+                myTimeRemainingMs=120000,
+                opponentTimeRemainingMs=5000,
+                opponentTimerTicking=True,
+            ),
+            catalog,
+        )
+        text = game_state_markdown(payload)
+        assert "opponent's clock is running" in text
+        assert "loses the game" not in text
+
+    @pytest.mark.parametrize(
+        ("ms", "shown"),
+        [(0, "0:00"), (999, "0:00"), (1000, "0:01"), (59_999, "0:59"), (120_000, "2:00"),
+         (-5000, "0:00"), (None, "?")],
+    )
+    async def test_time_is_floored_and_never_negative(self, ms, shown):
+        from src.render import _mmss
+
+        assert _mmss(ms) == shown
