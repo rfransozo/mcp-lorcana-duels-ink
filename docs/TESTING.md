@@ -84,24 +84,26 @@ C:/venvs/mcp-lorcana-duels-ink/Scripts/python.exe -m pip install -r requirements
 
 ## Wiring
 
-`.mcp.json` at the repo root registers the server for this project:
+Registered at **user scope**, in the `mcpServers` block of `~/.claude.json`:
 
 ```json
-{
-  "mcpServers": {
-    "duels": {
-      "command": "C:\venvs\mcp-lorcana-duels-ink\Scripts\python.exe",
-      "args": ["<absolute path>\src\server.py"],
-      "env": {}
-    }
-  }
+"duels": {
+  "type": "stdio",
+  "command": "C:\venvs\mcp-lorcana-duels-ink\Scripts\python.exe",
+  "args": ["<absolute path>\src\server.py"],
+  "env": { "DUELS_SESSION_COOKIE": "<optional>" }
 }
 ```
 
-It is **gitignored** — both paths are absolute and specific to one machine.
+User scope rather than a project `.mcp.json` on purpose: a project-scoped file
+is only read when the session's own project root is this folder, so it silently
+does nothing if the session happens to be rooted somewhere else. User scope
+works from any directory.
 
-Claude Code asks for approval the first time it starts a project-scoped server.
-Restart the session (or reconnect) after creating the file.
+Do not register it in both places under the same name.
+
+Restart the Claude Code session after editing the config, and approve the
+server when prompted.
 
 ## Using your own account
 
