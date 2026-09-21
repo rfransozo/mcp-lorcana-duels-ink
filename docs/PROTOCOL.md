@@ -293,12 +293,101 @@ and a `data` object that `duels_get_game_log` does not surface.
 `GET /api/decks/{id}` returns `deck.cardIds` - a **flat list of 60 definitionIds**
 with repeats (plus `deckEntries` grouped by quantity).
 
+## Tables
+
+A table is a private lobby that seats 2 to 4 players. It is the only way into
+the Coconut format and the only way into a game with more than one opponent:
+neither has a queue, and neither runs against the bot.
+
+```
+POST /api/table/create              {applyDefaultPreset: true}
+GET  /api/table/{id}/view           -> {"view": {...}}      <- note the envelope
+POST /api/table/{id}/action         {"action": {...}}
+GET  /api/table/{id}/ws-token       the lobby has its own socket
+GET  /api/home/data                 -> {openTables, liveGames, stats}
+```
+
+**The view arrives one level down**, as `{"view": {...}}`, and an action's
+answer does the same alongside `success`. Reading the outer object yields a
+status of `None` and a table that looks empty rather than unreachable.
+
+### Actions
+
+| type | body | note |
+|---|---|---|
+| `JOIN_TABLE` | `{username}` for guests | takes a free seat |
+| `LEAVE_TABLE` | | |
+| `SET_DECK` | `{deckId, deckCardIds, coconutCardId}` | see below |
+| `SET_READY` | `{ready: true\|false}` | see below |
+| `ADD_BOT_SEAT` | | |
+| `KICK_SEAT` | `{seatIndex}` | also how a bot is removed |
+| `UPDATE_SETTINGS` | `{config: {...}}` | partial patch |
+| `START_GAME` | | |
+| `CANCEL_TABLE` | | |
+
+Two of these answer `200 {"success": true}` while doing nothing at all, which
+is the worst way for an API to disagree with you:
+
+* **`SET_READY` carries its value.** There is no `SET_UNREADY`. Sending the
+  bare type is accepted and the seat stays unready - found by readying up
+  through the API, watching the seat refuse to change, and then reading what
+  the site's own button sends.
+* **`UPDATE_SETTINGS` ignores config keys it does not know.** Six spellings of
+  a visibility flag were all accepted; only `visibility` landed.
+
+### Config
+
+`{gameFormat, maxSeats, openSeats, visibility, timerPreset, allowSpectators,
+revealHands, revealHandsToSpectators, afkPingEnabled, allowGuestInvites,
+privateUndoConfig{mode}}`
+
+* `gameFormat` is `Core`, `Infinity`, `Coconut` or `NoLimit`. The table's
+  format decides which decks are legal in it: a three-ink Coconut deck is
+  refused at a Core table with *"Deck has too many colors"*.
+* **`maxSeats` and `openSeats` are different.** The first is capacity, the
+  second is how many are joinable. Raising only `maxSeats` leaves the table
+  showing as full.
+* Game mode is separate from format: *"Sealed, Pack Rush and Draft are 1v1
+  modes"*, so Constructed is the one that reaches four players.
+
+### Seats
+
+`{index, userId, username, connected, ready, hasDeck, hasCoconut,
+coconutCardId, coconutCardVersion, deckId, deckCardIds, isBot, botDifficulty}`
+
+**A seat does not infer the Coconut from the deck id.** `SET_DECK` with only
+`deckId` and `deckCardIds` seats a Coconut deck without its Coconut: the seat
+reports `hasCoconut: false` while still looking seated and ready, and the game
+would begin without the card.
+
+**A Coconut table cannot hold a bot.** Setting the format while one is seated
+is refused with `400 {"code": "bot_no_coconut"}`, and the UI says *"Bots can't
+play the Coconut format yet"*. Remove it with `KICK_SEAT` first.
+
+The view also carries `mySeatIndex`, `isHost`, `isSpectator`, `spectators[]`,
+`version`, and a `log[]` of every join and leave - one busy table had fifty
+entries before anybody sat down, so it is not worth printing.
+
+### Finding a table
+
+`GET /api/home/data` returns `openTables[]` as
+`{id, hostName, format, maxSeats, seatsFilled, timerPreset, createdAt,
+lastActiveAt}`. Only tables set to `visibility: "public"` appear; the rest are
+reachable by invite link only. There is no `/api/table/list` - every guess at
+one is a 404.
+
 ## Coconut decks
 
 A Coconut is a card chosen while deckbuilding that stays in play for the whole
 game and is never part of the 60; at least one of its inks must be among the
 deck's inks. It is the Coconut format, and it is in beta - the site says the
 pool and the wording can still change.
+
+The site states the format as: *"pick a Coconut card, singleton deck of 60+
+cards in up to 3 inks, 25 lore to win"* - so the win threshold is **25, not
+20**, and three inks are legal where two is the usual cap. Pack Rush is 15.
+A table can also set its own `loreToWin`, so the number is never safe to
+assume.
 
 A deck is made Coconut-legal by one field:
 

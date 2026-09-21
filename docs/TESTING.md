@@ -18,6 +18,7 @@ No network, no account, no games created. It finishes in under ten seconds.
 | `test_tools_account.py` | Friends, invites, match history, replays, leaderboard, seasons, whoami |
 | `test_tools_decks.py` | Building, renaming, deleting and importing decks; draft, sealed and playground |
 | `test_tools_play.py` | Bot games, tables, and entering or leaving the matchmaking queue |
+| `test_tools_tables.py` | Lobbies: the view envelope, seats, ready, formats, finding and joining |
 | `test_tools_ingame.py` | The game log, waiting for a turn, conceding, and the odd prompt shapes |
 | `test_resources.py` | The `duels://` resources, which are addressed by URI rather than called |
 | `test_matchmaking.py` | Queue heartbeat, accepting a pairing inside its window, falling back when the stream drops |
@@ -25,7 +26,7 @@ No network, no account, no games created. It finishes in under ten seconds.
 | `test_render.py` | Phase gates, zone filtering, move arguments, board description |
 | `test_gamews.py` | Connect, action round-trip, reconnection, registry - against a real socket |
 | `test_toolkit.py` | Error conversion, progress pings |
-| `test_tools_contract.py` | Naming, annotations, schemas and docstrings across all 44 tools |
+| `test_tools_contract.py` | Naming, annotations, schemas and docstrings across all 46 tools |
 | `test_tools_offline.py` | The tools end to end, plus the property test below |
 | `test_server.py` | `/health` and transport selection - the MCPize deploy contract |
 | `test_live_smoke.py` | Opt-in, read-only, anonymous checks against the real site |
