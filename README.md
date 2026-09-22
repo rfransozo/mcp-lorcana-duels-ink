@@ -164,6 +164,38 @@ test an interaction without playing a real game into that position.
 - "How did my last five ranked games go?"
 - "Who's at the top of the leaderboard this season?"
 
+## Decisions considered and declined
+
+**A decision model inside the server** (evaluated 2026-09-22, against TypeSafe
+AI's Jev). Two timed games were lost on the clock rather than on the board, both
+because the assistant's session stalled - once on a conversation compaction,
+once on an HTTP 429 - while the two-minute turn ran on without it. A
+System One model answers in 70-500ms, so the obvious question was whether the
+server should pick the move itself.
+
+It fits unusually well on paper. Such a model wants dense program state as text
+and a closed set of options with descriptions, and this server already emits
+both: the rendered board is the state, and every `legal_moves` entry already
+carries a `why`. Choosing would be an argmax over a list index.
+
+Declined anyway, for reasons that are not about the model:
+
+* **It contradicts what this server promises.** The instructions shipped to
+  every client say `legal_moves` reports what is *permitted*, never what is
+  *good*, and that choosing between them is the caller's - that is where games
+  are won and lost. Nothing in `src/` scores, ranks or prefers a move, by
+  design. A decider inside makes this an autonomous bot rather than a set of
+  tools, which is a different product.
+* **Nothing here could show it plays well.** `evals/duels_eval.xml` measures
+  tool use against the card catalog, not play quality. Adopting a model with no
+  way to measure it trades a known uncertainty for an unknown one.
+* **The measured problem shrank on its own.** `duels_play_turn` made a turn cost
+  one call instead of four, and the next ranked game ended with the clock still
+  at a full 2:00 - lost on the board, which is the right way to lose.
+
+Worth revisiting if the round trips stop being enough, or if the goal becomes
+playing unattended. That second one is a product question, not a latency one.
+
 ## Notes
 
 Every tool returns human-readable Markdown by default; pass
