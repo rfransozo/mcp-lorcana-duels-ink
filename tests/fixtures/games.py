@@ -165,6 +165,46 @@ def stuck() -> dict:
     return game
 
 
+def coconut_table(
+    *,
+    players: int = 4,
+    eliminated: tuple[int, ...] = (),
+    **overrides: Any,
+) -> dict:
+    """A Coconut table, which seats anywhere from two to four players.
+
+    Coconut is a format, not a player count: a table of two is as legal as a
+    table of four, and the only thing that changes is how long `opponents` is.
+    The wire keeps `opponent` pointing at the first of them, which is exactly
+    why reading the singular looked like it worked.
+    """
+    names = {"1": "You", "2": "Joe", "3": "Ewaldo", "4": "DRobb"}
+    game = base_game(gameVariant="coconut", isBotGame=False, playerNames=names)
+    game["myPlayer"]["coconutCard"] = card("my-coconut", "coconut-011")
+
+    seats = []
+    for number in range(2, players + 1):
+        seats.append(
+            {
+                "playerNumber": number,
+                "name": names[str(number)],
+                "handCount": 4,
+                "deckCount": 47,
+                "field": [card(f"opp{number}-pete", "5-195")],
+                "items": [],
+                "inkwell": [card(f"opp{number}-ink", "12-133")],
+                "discard": [card(f"opp{number}-disc", "5-195")],
+                "lore": number * 3,
+                "eliminated": number in eliminated,
+                "coconutCard": card(f"opp{number}-coconut", "coconut-017"),
+            }
+        )
+    game["opponents"] = seats
+    game["opponent"] = seats[0]
+    game.update(overrides)
+    return game
+
+
 def all_phases() -> dict[str, dict]:
     """Every phase, for tests that sweep across all of them."""
     from . import prompts

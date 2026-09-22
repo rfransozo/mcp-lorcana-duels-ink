@@ -60,8 +60,16 @@ the cost curve tell you which deck you are facing, usually by turn three, and \
 the discard says what they have already spent.
 * **Track your own deck** with duels_get_deck_tracker - what is left, and \
 therefore what you can still expect to draw.
-* Watch the lore race both ways. First to 20 wins, so weigh your lore per turn \
-against theirs before deciding whether to quest or to trade in a challenge.
+* Watch the lore race in every direction. The goal is not always 20 - Coconut \
+needs 25 and Pack Rush 15, and a table can set its own - so read `lore_to_win` \
+from the state instead of assuming. A table seats up to four players and \
+`opponents` holds all of them; the one to race is whoever is closest to the \
+goal, not whoever you happen to be facing.
+* **Games against people are on a clock, and it is unforgiving.** Every state \
+carries one. Running it to zero does not pass the turn - it eliminates you \
+where you stand, board, hand and deck gone and lore frozen, while the others \
+play on. Read it before thinking long, and end your turn to get time credited \
+back.
 """
 
 

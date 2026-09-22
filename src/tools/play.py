@@ -111,7 +111,11 @@ def _table_md(p: dict) -> str:
             f"**Game started:** `{p['game_id']}` - continue with duels_get_game_state.",
         ]
 
-    rows = ["", "| Seat | Player | Deck | Coconut | Ready |", "|---|---|---|---|---|"]
+    rows = [
+        "",
+        "| Seat | Player | Here | Deck | Coconut | Ready |",
+        "|---|---|---|---|---|---|",
+    ]
     for seat in p["seats"]:
         who = seat["player"] or "?"
         if seat["is_you"]:
@@ -119,10 +123,15 @@ def _table_md(p: dict) -> str:
         elif seat["is_bot"]:
             who = f"{who} (bot)"
         coconut = seat["coconut_card_id"] or ("yes" if seat["has_coconut"] else "-")
+        # A seat keeps its name, deck and ready flag after its player has gone,
+        # so without this an abandoned table looks exactly like a full one.
+        here = {True: "yes", False: "**gone**", None: "?"}[seat.get("connected")]
         rows.append(
-            f"| {seat['index']} | {who} | {'yes' if seat['has_deck'] else '-'} | "
+            f"| {seat['index']} | {who} | {here} | {'yes' if seat['has_deck'] else '-'} | "
             f"{coconut} | {'ready' if seat['ready'] else 'not ready'} |"
         )
+    if p["seats"] and all(seat.get("connected") is False for seat in p["seats"]):
+        rows += ["", "_Nobody is connected - this table has most likely been abandoned._"]
     empty = (p.get("open_seats") or 0) - p["seats_filled"]
     if empty > 0:
         rows += ["", f"_{empty} seat(s) still open._"]
@@ -459,11 +468,14 @@ async def duels_configure_table(
     - "Use my Tourmaline deck here" -> action='set_deck', deck_id=...
     - "I am ready" -> action='ready'
     - "Start the game" -> action='start'
+    - "Get me out of this table" -> action='leave'
 
     Args:
         ctx (Context): Injected by FastMCP.
         table_id (str): Table UUID from duels_create_table.
-        action (str): set_deck | ready | unready | add_bot | start | cancel.
+        action (str): set_deck | ready | unready | add_bot | kick_seat |
+            set_format | set_seats | make_public | make_private | leave |
+            start | cancel.
         deck_id (Optional[str]): Required when action='set_deck'.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
@@ -483,6 +495,7 @@ async def duels_configure_table(
         "ready": "SET_READY",
         "unready": "SET_READY",
         "add_bot": "ADD_BOT_SEAT",
+        "leave": "LEAVE_TABLE",
         "kick_seat": "KICK_SEAT",
         "set_format": "UPDATE_SETTINGS",
         "set_seats": "UPDATE_SETTINGS",

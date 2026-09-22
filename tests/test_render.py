@@ -562,8 +562,15 @@ class TestDiscard:
         assert "2x Mushu - Stealthy Dragon" in text
 
     async def test_both_discards_are_reported(self, catalog):
+        """Each side's discard is headed by whoever owns it, named when known."""
         text = game_state_markdown(await render_game_state(games.playing(), catalog))
-        assert "Discard - you" in text and "Discard - opponent" in text
+        assert "Discard - you" in text and "Discard - Bot (Normal)" in text
+
+    async def test_an_unnamed_opponents_discard_is_still_headed(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(games.playing(playerNames=None), catalog)
+        )
+        assert "Discard - Opponent" in text
 
     async def test_count_still_matches_the_list(self, catalog):
         payload = await render_game_state(games.playing(), catalog)
@@ -633,7 +640,7 @@ class TestTheClock:
         )
         text = game_state_markdown(payload)
         assert "you 0:12" in text
-        assert "loses the game" in text
+        assert "eliminates you" in text
 
     async def test_the_opponents_clock_is_not_escalated(self, catalog):
         """Their clock running low is their problem, not an alarm for us."""
@@ -658,3 +665,137 @@ class TestTheClock:
         from src.render import _mmss
 
         assert _mmss(ms) == shown
+
+
+class TestATableOfMoreThanTwo:
+    """A table seats two to four, and every one of them is in the race.
+
+    Reading only `opponent` did not crash and did not warn - it rendered a
+    four-player Coconut game as a duel, with two players' boards and lore
+    simply absent. Everything here exists to make that failure loud.
+    """
+
+    async def test_every_opponent_reaches_the_payload(self, catalog):
+        payload = await render_game_state(games.coconut_table(players=4), catalog)
+        assert [o["name"] for o in payload["opponents"]] == ["Joe", "Ewaldo", "DRobb"]
+        assert payload["player_count"] == 4
+
+    async def test_every_opponent_reaches_the_scoreboard(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        for name, lore in [("Joe", 6), ("Ewaldo", 9), ("DRobb", 12)]:
+            assert f"| {name} | {lore} |" in text
+
+    async def test_a_table_of_two_is_still_a_table(self, catalog):
+        """Coconut is a format, not a player count."""
+        payload = await render_game_state(games.coconut_table(players=2), catalog)
+        assert len(payload["opponents"]) == 1
+        assert payload["player_count"] == 2
+        assert payload["lore_to_win"] == 25
+
+    async def test_a_table_of_three(self, catalog):
+        payload = await render_game_state(games.coconut_table(players=3), catalog)
+        assert [o["name"] for o in payload["opponents"]] == ["Joe", "Ewaldo"]
+
+    async def test_each_opponent_gets_a_board(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        assert text.count(" board\n") == 4  # mine plus three
+
+    async def test_targets_belonging_to_the_third_player_are_named(self, catalog):
+        """Otherwise a challenge target from seat 4 prints as a bare UUID."""
+        payload = await render_game_state(games.coconut_table(), catalog)
+        blob = str(payload["legal_moves"])
+        assert "opp4-pete" not in blob or "Pete" in blob
+
+    async def test_the_singular_opponent_still_points_somewhere(self, catalog):
+        """The old contract keeps working; it just stops being the whole story."""
+        payload = await render_game_state(games.coconut_table(), catalog)
+        assert payload["opponent"] == payload["opponents"][0]
+
+    async def test_a_duel_is_unchanged(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert len(payload["opponents"]) == 1
+        assert payload["player_count"] == 2
+        assert payload["opponent"]["name"] == "Bot (Normal)"
+
+
+class TestElimination:
+    """A player can be out while the game goes on without them."""
+
+    async def test_an_eliminated_opponent_is_marked(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(games.coconut_table(eliminated=(3,)), catalog)
+        )
+        assert "Ewaldo (ELIMINATED)" in text
+        assert "Joe (ELIMINATED)" not in text
+
+    async def test_being_eliminated_myself_is_marked(self, catalog):
+        game = games.coconut_table()
+        game["myPlayer"]["eliminated"] = True
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "**You** (ELIMINATED)" in text
+
+    async def test_nobody_is_eliminated_by_default(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        assert "ELIMINATED" not in text
+
+
+class TestTheGoal:
+    """Twenty lore is a default, not a rule."""
+
+    async def test_a_normal_game_still_wants_twenty(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["lore_to_win"] == 20
+
+    async def test_coconut_wants_twenty_five(self, catalog):
+        payload = await render_game_state(games.coconut_table(), catalog)
+        assert payload["lore_to_win"] == 25
+        assert "first to 25 lore" in game_state_markdown(payload)
+
+    async def test_pack_rush_wants_fifteen(self, catalog):
+        payload = await render_game_state(games.playing(gameVariant="packRush"), catalog)
+        assert payload["lore_to_win"] == 15
+
+    async def test_a_table_may_overrule_its_variant(self, catalog):
+        payload = await render_game_state(games.coconut_table(loreToWin=30), catalog)
+        assert payload["lore_to_win"] == 30
+
+    async def test_a_nonsense_threshold_falls_back(self, catalog):
+        payload = await render_game_state(games.coconut_table(loreToWin=0), catalog)
+        assert payload["lore_to_win"] == 25
+
+    async def test_the_variant_is_named_in_the_header(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        assert "coconut" in text
+
+
+class TestTheCoconut:
+    """The card that is in play from turn one and never in the deck."""
+
+    async def test_my_coconut_is_a_zone_of_its_own(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        assert "## Your Coconut" in text
+
+    async def test_each_opponent_coconut_is_shown(self, catalog):
+        text = game_state_markdown(await render_game_state(games.coconut_table(), catalog))
+        assert "## Joe Coconut" in text and "## DRobb Coconut" in text
+
+    async def test_a_game_without_coconuts_shows_none(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["me"]["coconut"] == []
+        assert "Coconut" not in game_state_markdown(payload)
+
+
+class TestTheWinner:
+    """With four players, 'player 4' is not an answer anybody can act on."""
+
+    async def test_the_winner_is_named_when_known(self, catalog):
+        game = games.coconut_table()
+        game["status"], game["winner"] = "finished", 4
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "DRobb (player 4)" in text
+
+    async def test_an_unknown_winner_still_falls_back_to_the_number(self, catalog):
+        game = games.coconut_table()
+        game["status"], game["winner"] = "finished", 9
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "winner: player 9" in text

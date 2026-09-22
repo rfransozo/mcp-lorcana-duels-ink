@@ -176,13 +176,22 @@ async def duels_get_game_state(
             "game_id": str, "status": str,          # coin_toss | mulligan | playing | finished
             "turn_number": int, "my_turn": bool,
             "player_number": int, "state_version": int,
+            "player_count": int,            # 2 to 4; a table is not always a duel
+            "game_variant": str | null,     # e.g. "coconut"
+            "lore_to_win": int,             # 20, or 25 Coconut, 15 Pack Rush, or the table's own
+            "clock": {"my_ms","opponent_ms","my_clock_running","opponent_clock_running"},
             "me": {
                 "lore": int, "ink_available": int, "ink_total": int,
                 "hand_count": int, "deck_count": int, "discard_count": int,
+                "eliminated": bool,
                 "hand": [{"instance_id","card","cost","type","can":[...],"blocked":str}],
-                "field": [...], "items": [...]
+                "field": [...], "items": [...], "coconut": [...]
             },
-            "opponent": { ... same, but hand_count only - their hand is hidden },
+            "opponents": [                  # one entry per opponent - READ THIS ONE
+                { "name": str|null, "player_number": int|null, "eliminated": bool,
+                  ... same zones, but hand_count only - their hand is hidden }
+            ],
+            "opponent": { ... },            # opponents[0], kept for older callers
             "legal_moves": [{"tool": str, "why": str, "args": {...}}],
             "pending_prompts": [...],   # when a decision is waiting
             "winner": int, "i_won": bool    # once the game is over
@@ -328,7 +337,8 @@ async def duels_get_game_log(
             if e["turn"] != turn:
                 turn = e["turn"]
                 lines.append(f"\n**Turn {turn}**")
-            who = {1: "P1", 2: "P2"}.get(e["player"], "-")
+            seat = e["player"]
+            who = f"P{seat}" if isinstance(seat, int) and not isinstance(seat, bool) else "-"
             lines.append(f"- [{who}] {e['message']}")
         return join_lines(lines)
 
@@ -602,7 +612,8 @@ async def duels_quest(
 ) -> str:
     """Quests with one of your characters: exerts it and gains you its lore value.
 
-    Questing is how you win - first to 20 lore takes the game. A character can
+    Questing is how you win - the race is to `lore_to_win` in the state, which
+    is 20 by default but 25 in Coconut and 15 in Pack Rush. A character can
     only quest if it is ready (not exerted) and its ink is dry (it was not
     played this turn). duels_get_game_state marks eligible characters "canQuest".
 

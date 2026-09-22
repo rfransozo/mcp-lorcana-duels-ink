@@ -505,6 +505,33 @@ class TestDeckTracker:
         assert mine["total"] == len(deck_fixtures.CARD_IDS)
         assert mine["remaining"] == mine["total"] - mine["seen"]
 
+    async def test_every_opponent_at_a_table_is_tracked(self, mcp_client, router):
+        """At a table there are three decks to read, not one.
+
+        Reading the singular `opponent` gave an archetype call based on a third
+        of the cards actually on show, with no sign the rest existed.
+        """
+        async with FakeGameServer(games.coconut_table()) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token",
+                {"token": "t", "wsUrl": server.url},
+            )
+            router.json_on(
+                "/api/game/create-bot-game", {"gameId": games.GAME_ID, "sessionId": None}
+            )
+            await call_json(
+                mcp_client, "duels_start_bot_game", deck_id=deck_fixtures.DECK_ID
+            )
+            payload = await call_json(
+                mcp_client, "duels_get_deck_tracker", game_id=games.GAME_ID
+            )
+        assert [o["name"] for o in payload["opponents_revealed"]] == [
+            "Joe",
+            "Ewaldo",
+            "DRobb",
+        ]
+        assert payload["opponent_revealed"] == payload["opponents_revealed"][0]
+
     async def test_deck_id_is_remembered_from_the_game(self, mcp_client, router, game_server):
         """A tracker that had to be handed the deck id on every call is one an
         agent forgets to use."""

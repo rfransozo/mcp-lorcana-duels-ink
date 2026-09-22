@@ -536,10 +536,60 @@ def _clock(game: dict) -> Optional[dict]:
     }
 
 
+def _opponent_seats(game: dict) -> list[dict]:
+    """Every opponent, in a shape that does not depend on the player count.
+
+    A duel sends `opponent` alone. A table sends `opponents` as a list and
+    keeps `opponent` as one of them, so reading only the singular showed a
+    four-player Coconut game as a duel against one stranger - no error, no
+    missing key, just two of the three opponents quietly absent from the board
+    and from the lore race. The list wins whenever it exists.
+    """
+    seats = game.get("opponents")
+    if isinstance(seats, list) and seats:
+        return [seat for seat in seats if isinstance(seat, dict)]
+    one = game.get("opponent")
+    return [one] if isinstance(one, dict) and one else []
+
+
+def _player_number(seat: dict) -> Optional[int]:
+    """The seat's player number, however this payload happens to spell it."""
+    for key in ("playerNumber", "player", "seat"):
+        value = seat.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _coconut_zone(player: dict) -> list[dict]:
+    """The Coconut as a one-card zone, or nothing outside the format.
+
+    It is a permanent that never sat in the deck and never leaves play, and the
+    wire sends it as a plain card object rather than a list. Wrapping it lets
+    it go through _describe_zone like any other zone.
+    """
+    card = player.get("coconutCard")
+    return [card] if isinstance(card, dict) and card else []
+
+
+def _lore_to_win(game: dict) -> int:
+    """How much lore actually wins this game.
+
+    Twenty is only the default. Coconut needs 25 and Pack Rush 15, and a table
+    may set its own, so the number is never safe to assume - a Coconut game was
+    played as if 8 lore were nearly half the race when it was under a third.
+    `loreToWin` is sent when a table overrides it; otherwise the variant says.
+    """
+    explicit = game.get("loreToWin")
+    if isinstance(explicit, int) and not isinstance(explicit, bool) and explicit > 0:
+        return explicit
+    variant = "".join(c for c in str(game.get("gameVariant") or "") if c.isalpha()).lower()
+    return {"coconut": 25, "packrush": 15}.get(variant, 20)
+
+
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     """Produce the compact, agent-facing view of a game state."""
     me = game.get("myPlayer") or {}
-    opponent = game.get("opponent") or {}
     available = game.get("availableActions") or {}
     action_map = available.get("cards") or {}
 
@@ -549,8 +599,34 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     hand = await _describe_zone(catalog, me.get("hand"), action_map)
     field = await _describe_zone(catalog, me.get("field"), action_map)
     items = await _describe_zone(catalog, me.get("items"), action_map)
-    opp_field = await _describe_zone(catalog, opponent.get("field"), action_map)
-    opp_items = await _describe_zone(catalog, opponent.get("items"), action_map)
+
+    # One entry per opponent, so a duel and a four-player table differ only in
+    # the length of this list. `or [{}]` keeps the shape when there is nobody
+    # to describe yet - during the coin toss, say - instead of dropping the key.
+    seats = _opponent_seats(game) or [{}]
+    names = game.get("playerNames") or {}
+    opponents: list[dict] = []
+    for seat in seats:
+        number = _player_number(seat)
+        if number is None and len(seats) == 1 and isinstance(viewing_as, int):
+            # A duel names its seats but does not number them.
+            number = 3 - viewing_as
+        opponents.append(
+            {
+                "name": seat.get("name") or names.get(str(number)),
+                "player_number": number,
+                "lore": seat.get("lore"),
+                "eliminated": bool(seat.get("eliminated")),
+                "ink_total": len(seat.get("inkwell") or []),
+                "hand_count": seat.get("handCount"),
+                "deck_count": seat.get("deckCount"),
+                "discard_count": len(seat.get("discard") or []),
+                "discard": await _describe_zone(catalog, seat.get("discard")),
+                "field": await _describe_zone(catalog, seat.get("field"), action_map),
+                "items": await _describe_zone(catalog, seat.get("items"), action_map),
+                "coconut": await _describe_zone(catalog, _coconut_zone(seat)),
+            }
+        )
 
     payload: dict[str, Any] = {
         "game_id": game.get("id"),
@@ -561,6 +637,9 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "state_version": game.get("stateVersion"),
         "is_bot_game": game.get("isBotGame"),
         "clock": _clock(game),
+        "game_variant": game.get("gameVariant"),
+        "lore_to_win": _lore_to_win(game),
+        "player_count": 1 + len(_opponent_seats(game)),
         "me": {
             "lore": me.get("lore"),
             "ink_available": available.get("availableInk"),
@@ -573,27 +652,21 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "hand": hand,
             "field": field,
             "items": items,
+            "coconut": await _describe_zone(catalog, _coconut_zone(me)),
+            "eliminated": bool(me.get("eliminated")),
         },
-        "opponent": {
-            "name": (game.get("playerNames") or {}).get(str(3 - (viewing_as or 1)))
-            if game.get("playerNames")
-            else None,
-            "lore": opponent.get("lore"),
-            "ink_total": len(opponent.get("inkwell") or []),
-            "hand_count": opponent.get("handCount"),
-            "deck_count": opponent.get("deckCount"),
-            "discard_count": len(opponent.get("discard") or []),
-            "discard": await _describe_zone(catalog, opponent.get("discard")),
-            "field": opp_field,
-            "items": opp_items,
-        },
+        # Kept as the first opponent so anything reading the old singular
+        # contract still works; `opponents` is the one to read.
+        "opponent": opponents[0],
+        "opponents": opponents,
         "legal_moves": _legal_moves(
             game,
             hand,
             [*field, *items],
             {
                 c["instance_id"]: c["card"]
-                for c in [*opp_field, *opp_items]
+                for seat in opponents
+                for c in [*seat["field"], *seat["items"]]
                 if c.get("instance_id") and c.get("card")
             },
         ),
@@ -742,19 +815,36 @@ def _discard_line(entries: list[dict]) -> str:
 def game_state_markdown(payload: dict) -> str:
     """Human-readable rendering of render_game_state's output."""
     me = payload.get("me") or {}
-    opp = payload.get("opponent") or {}
+    opponents = payload.get("opponents") or [payload.get("opponent") or {}]
+
+    def who(index: int, seat: dict) -> str:
+        """What to call an opponent: their name, or their seat when unnamed."""
+        name = seat.get("name") or (
+            f"Opponent {index + 1}" if len(opponents) > 1 else "Opponent"
+        )
+        return f"{name} (ELIMINATED)" if seat.get("eliminated") else name
 
     turn = "YOUR TURN" if payload.get("my_turn") else "opponent's turn"
+    # The goal belongs in the header because it is not always 20: Coconut wants
+    # 25, Pack Rush 15, and a table may set its own. Getting it wrong is silent
+    # - it just makes the whole lore race read as closer than it is.
+    goal = f" - first to {payload['lore_to_win']} lore" if payload.get("lore_to_win") else ""
+    variant = f" - {payload['game_variant']}" if payload.get("game_variant") else ""
+    you = "**You** (ELIMINATED)" if me.get("eliminated") else "**You**"
     header = [
         f"# Game {payload.get('game_id')}",
-        f"**{payload.get('status')}** - turn {payload.get('turn_number')} - {turn}",
+        f"**{payload.get('status')}** - turn {payload.get('turn_number')} - {turn}"
+        f"{variant}{goal}",
         "",
-        f"| | Lore | Hand | Deck | Ink | Discard |",
-        f"|---|---|---|---|---|---|",
-        f"| **You** | {me.get('lore')} | {me.get('hand_count')} | {me.get('deck_count')} | "
+        "| | Lore | Hand | Deck | Ink | Discard |",
+        "|---|---|---|---|---|---|",
+        f"| {you} | {me.get('lore')} | {me.get('hand_count')} | {me.get('deck_count')} | "
         f"{me.get('ink_available')}/{me.get('ink_total')} | {me.get('discard_count')} |",
-        f"| {opp.get('name') or 'Opponent'} | {opp.get('lore')} | {opp.get('hand_count')} | "
-        f"{opp.get('deck_count')} | {opp.get('ink_total')} | {opp.get('discard_count')} |",
+        *[
+            f"| {who(i, o)} | {o.get('lore')} | {o.get('hand_count')} | "
+            f"{o.get('deck_count')} | {o.get('ink_total')} | {o.get('discard_count')} |"
+            for i, o in enumerate(opponents)
+        ],
         "",
     ]
 
@@ -768,7 +858,8 @@ def game_state_markdown(payload: dict) -> str:
             mine = clock.get("my_ms")
             urgent = isinstance(mine, (int, float)) and mine <= LOW_CLOCK_MS
             line += (
-                " - **your clock is running out and losing it loses the game**"
+                " - **your clock is nearly gone; hitting 0:00 eliminates you "
+                "on the spot, board and all**"
                 if urgent
                 else " - your clock is running"
             )
@@ -777,9 +868,19 @@ def game_state_markdown(payload: dict) -> str:
         header.extend([line, ""])
 
     if payload.get("winner") is not None:
+        winner = payload["winner"]
+        named = next(
+            (
+                seat["name"]
+                for seat in opponents
+                if seat.get("name") and seat.get("player_number") == winner
+            ),
+            None,
+        )
+        beat_me = f"{named} (player {winner})" if named else f"player {winner}"
         header.append(
             f"## Game over - {'you won' if payload.get('i_won') else 'you lost'} "
-            f"(winner: player {payload['winner']})\n"
+            f"(winner: {beat_me})\n"
         )
 
     if payload.get("pending_prompts"):
@@ -798,6 +899,12 @@ def game_state_markdown(payload: dict) -> str:
     seen: set = set()
 
     sections = []
+    # The Coconut leads: it is in play from turn one and never leaves, so it is
+    # part of the board even though it was never in the deck.
+    if me.get("coconut"):
+        sections.append(
+            "## Your Coconut\n" + "\n".join(_card_line(c, seen=seen) for c in me["coconut"])
+        )
     if me.get("field"):
         sections.append(
             "## Your board\n" + "\n".join(_card_line(c, seen=seen) for c in me["field"])
@@ -807,16 +914,16 @@ def game_state_markdown(payload: dict) -> str:
             "## Your items/locations\n"
             + "\n".join(_card_line(c, seen=seen) for c in me["items"])
         )
-    if opp.get("field"):
-        sections.append(
-            "## Opponent board\n"
-            + "\n".join(_card_line(c, show_actions=False, seen=seen) for c in opp["field"])
-        )
-    if opp.get("items"):
-        sections.append(
-            "## Opponent items/locations\n"
-            + "\n".join(_card_line(c, show_actions=False, seen=seen) for c in opp["items"])
-        )
+    for index, seat in enumerate(opponents):
+        for title, zone in (("Coconut", "coconut"), ("board", "field"),
+                            ("items/locations", "items")):
+            if seat.get(zone):
+                sections.append(
+                    f"## {who(index, seat)} {title}\n"
+                    + "\n".join(
+                        _card_line(c, show_actions=False, seen=seen) for c in seat[zone]
+                    )
+                )
     if me.get("hand"):
         sections.append("## Your hand\n" + "\n".join(_card_line(c, seen=seen) for c in me["hand"]))
 
@@ -825,10 +932,12 @@ def game_state_markdown(payload: dict) -> str:
         sections.append(
             f"## Discard - you ({len(me['discard'])})\n" + _discard_line(me["discard"])
         )
-    if opp.get("discard"):
-        sections.append(
-            f"## Discard - opponent ({len(opp['discard'])})\n" + _discard_line(opp["discard"])
-        )
+    for index, seat in enumerate(opponents):
+        if seat.get("discard"):
+            sections.append(
+                f"## Discard - {who(index, seat)} ({len(seat['discard'])})\n"
+                + _discard_line(seat["discard"])
+            )
 
     sections.append(legal_moves_markdown(payload))
 

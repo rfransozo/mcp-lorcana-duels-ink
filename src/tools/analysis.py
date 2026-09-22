@@ -16,6 +16,7 @@ from ..cards import summarise
 from ..client import DuelsError
 from ..formatting import join_lines, render
 from ..models import GameId, ResponseFmt, ResponseFormat
+from ..render import _opponent_seats, _player_number
 from ..toolkit import tool_errors
 
 
@@ -92,10 +93,11 @@ async def duels_get_deck_tracker(
                 "total": int, "seen": int, "remaining": int,   # total = seen + remaining
                 "remaining_cards": [{"definition_id","name","count","cost","type"}]
             },
-            "opponent_revealed": {
-                "count": int, "colors": list[str],
+            "opponents_revealed": [{
+                "name": str | null, "count": int, "colors": list[str],
                 "cards": [{"definition_id","name","count","cost","type"}]
-            }
+            }],
+            "opponent_revealed": {...}   # the first of them, for older callers
         }
         remaining_cards is sorted by cost then name.
 
@@ -126,7 +128,9 @@ async def duels_get_deck_tracker(
     conn = await app.games.get(game_id, app.games.session_for(game_id))
     game = await conn.refresh()
     me = game.get("myPlayer") or {}
-    opponent = game.get("opponent") or {}
+    # A table seats up to four, so there is no single "the opponent" to read.
+    seats = _opponent_seats(game) or [{}]
+    names = game.get("playerNames") or {}
 
     # Everything of mine that is no longer in the deck.
     seen_ids = _zone_ids(me, "hand", "field", "items", "inkwell", "discard")
@@ -134,8 +138,11 @@ async def duels_get_deck_tracker(
     remaining.subtract(Counter(seen_ids))
     remaining = Counter({k: v for k, v in remaining.items() if v > 0})
 
-    # The opponent's hand and deck are hidden; only played and discarded show.
-    revealed_ids = _zone_ids(opponent, "field", "items", "discard")
+    # Hands and decks stay hidden; only what was played or discarded shows.
+    # The Coconut is deliberately left out: it never sat in a deck, so counting
+    # it would say something false about what they are still holding.
+    per_seat = [_zone_ids(seat, "field", "items", "discard") for seat in seats]
+    revealed_ids = [i for ids in per_seat for i in ids]
 
     resolved = await app.catalog.resolve_many(set(remaining) | set(revealed_ids))
 
@@ -154,13 +161,27 @@ async def duels_get_deck_tracker(
             )
         return sorted(out, key=lambda r: (r["cost"] if r["cost"] is not None else 99, r["name"]))
 
-    colors = sorted(
-        {
-            colour
-            for definition_id in set(revealed_ids)
-            for colour in ((resolved.get(definition_id) or {}).get("colors") or [])
-        }
-    )
+    def inks(ids: list[str]) -> list[str]:
+        return sorted(
+            {
+                colour
+                for definition_id in set(ids)
+                for colour in ((resolved.get(definition_id) or {}).get("colors") or [])
+            }
+        )
+
+    revealed = []
+    for index, (seat, ids) in enumerate(zip(seats, per_seat)):
+        number = _player_number(seat)
+        fallback = f"Opponent {index + 1}" if len(seats) > 1 else "Opponent"
+        revealed.append(
+            {
+                "name": seat.get("name") or names.get(str(number)) or fallback,
+                "count": len(ids),
+                "colors": inks(ids),
+                "cards": rows(Counter(ids)),
+            }
+        )
 
     payload = {
         "game_id": game_id,
@@ -175,15 +196,13 @@ async def duels_get_deck_tracker(
             "remaining": sum(remaining.values()),
             "remaining_cards": rows(remaining),
         },
-        "opponent_revealed": {
-            "count": len(revealed_ids),
-            "colors": colors,
-            "cards": rows(Counter(revealed_ids)),
-        },
+        "opponents_revealed": revealed,
+        # Kept so anything reading the old singular contract still works.
+        "opponent_revealed": revealed[0],
     }
 
     def md(p: dict) -> str:
-        mine, theirs = p["my_deck"], p["opponent_revealed"]
+        mine = p["my_deck"]
         lines = [
             f"# Deck tracker - {mine.get('name') or mine['deck_id']}",
             "",
@@ -196,15 +215,16 @@ async def duels_get_deck_tracker(
             cost = f"{row['cost']} ink" if row["cost"] is not None else "-"
             lines.append(f"- {row['count']}x **{row['name']}** ({cost}) `{row['definition_id']}`")
 
-        lines += ["", f"## Opponent has shown ({theirs['count']} cards)"]
-        if theirs["colors"]:
-            lines.append(f"Ink: {', '.join(c.title() for c in theirs['colors'])}")
-        if theirs["cards"]:
-            for row in theirs["cards"]:
-                cost = f"{row['cost']} ink" if row["cost"] is not None else "-"
-                lines.append(f"- {row['count']}x **{row['name']}** ({cost})")
-        else:
-            lines.append("_Nothing yet._")
+        for theirs in p["opponents_revealed"]:
+            lines += ["", f"## {theirs['name']} has shown ({theirs['count']} cards)"]
+            if theirs["colors"]:
+                lines.append(f"Ink: {', '.join(c.title() for c in theirs['colors'])}")
+            if theirs["cards"]:
+                for row in theirs["cards"]:
+                    cost = f"{row['cost']} ink" if row["cost"] is not None else "-"
+                    lines.append(f"- {row['count']}x **{row['name']}** ({cost})")
+            else:
+                lines.append("_Nothing yet._")
         return join_lines(lines)
 
     return render(payload, response_format, md)

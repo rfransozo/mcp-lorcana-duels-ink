@@ -262,8 +262,12 @@ Games against people are timed and bot games are not. The live clock is in
 ```
 
 It is a chess clock: two minutes a turn, with about 45 seconds credited back on
-ending one, and running out loses the game. `roomView.timerPreset` names the
-setting and is `"none"` in bot games.
+ending one. Running out does not pass the turn - it **eliminates** the player,
+board and all (see Multiplayer state). `roomView.timerPreset` names the setting
+and is `"none"` in bot games.
+
+`timerView` has two fields at a table as well as in a duel, so it shows your
+clock and the clock of whoever is currently to move, not one per seat.
 
 `turnGateState` is *not* this. It holds per-turn counters - whether the ink for
 the turn has been used, what has been played - and carries no time at all.
@@ -279,6 +283,52 @@ The game log narrates the same clock, with the numbers under `data`:
 Use `timerView` rather than these: it is the current value, while the log is a
 record of events. Every log entry also carries `id`, `timestamp`, `turnNumber`
 and a `data` object that `duels_get_game_log` does not surface.
+
+## Multiplayer state
+
+Everything below was read off one live four-player Coconut game, seat 2.
+
+**`opponents` is the list; `opponent` is the first of it.** A duel sends only
+the singular, a table sends both, and the singular keeps pointing at one real
+player either way. So a reader that only knows `opponent` does not crash, does
+not log, and does not miss a key - it silently renders a four-player game as a
+duel, with two players' boards and lore simply absent. There is no way to tell
+from the payload alone that anything is missing.
+
+Per-player keys a two-player reader never needed:
+
+| key | note |
+|---|---|
+| `name` | on `opponents[]` entries only - the singular `opponent` has none |
+| `seat` / `playerNumber` | which seat this is |
+| `coconutCard` | a plain card object, not a list |
+| `coconutAbilitySpent` | whether its once-per-game ability is gone |
+| `eliminated` | out, while the game carries on |
+| `handCount`, `hasPendingPrompts` | |
+
+`playerNames` holds only `{"1": ..., "2": ...}` even at a four-player table, so
+seats 3 and 4 have to be named from `opponents[].name`.
+
+**There is no `loreToWin` in the state.** The UI shows `/25` for Coconut and
+the wire says nothing, so the threshold has to come from `gameVariant`
+(`"coconut"` -> 25, Pack Rush -> 15, otherwise 20) unless a table overrides it.
+
+### Elimination, and how a turn is lost
+
+Running the clock to zero does **not** pass the turn. It eliminates the player
+where they stand: `myPlayer` comes back with hand, deck, inkwell, discard and
+field all empty and `lore` frozen at whatever it was, while the other seats
+play on. A four-player game continued for three more turns after one seat
+timed out at 8 lore.
+
+`winner` is a **player number**, not a name - `4` at a table means the player
+in `opponents[]` whose number is 4.
+
+### Shift
+
+`canShift` on a hand card is answered by the ordinary `PLAY_CARD` action with
+`shiftTargetInstanceId` set to the board character being shifted onto. There is
+no separate SHIFT action.
 
 ## Game log
 

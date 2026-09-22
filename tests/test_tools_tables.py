@@ -292,6 +292,55 @@ class TestTableSettings:
             assert action in text
 
 
+class TestLeavingAndAbandonment:
+    """A seat you cannot leave, at a table you cannot tell is dead."""
+
+    async def test_leaving_sends_leave_table(self, router, authed_mcp_client):
+        routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="leave",
+        )
+        assert b"LEAVE_TABLE" in sent(router)
+
+    async def test_leave_is_offered_by_name_when_the_action_is_wrong(
+        self, authed_mcp_client
+    ):
+        text = await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="scarper",
+        )
+        assert text.startswith("Error:") and "leave" in text
+
+    async def test_a_seat_says_whether_anyone_is_in_it(self, router, authed_mcp_client):
+        """A seat keeps its name, deck and ready flag after its player leaves."""
+        routes(router)
+        text = await call_text(authed_mcp_client, "duels_get_table", table_id=TABLE_ID)
+        assert "| Here |" in text or "Here" in text
+        assert "**gone**" in text
+
+    async def test_an_abandoned_table_says_so(self, router, authed_mcp_client):
+        """Four seated, ready players and not one of them still connected."""
+        dead = view()
+        for seat in dead["view"]["seats"]:
+            seat["connected"] = False
+        routes(router, table=dead)
+        text = await call_text(authed_mcp_client, "duels_get_table", table_id=TABLE_ID)
+        assert "abandoned" in text
+
+    async def test_a_live_table_does_not_cry_abandonment(self, router, authed_mcp_client):
+        live = view()
+        for seat in live["view"]["seats"]:
+            seat["connected"] = True
+        routes(router, table=live)
+        text = await call_text(authed_mcp_client, "duels_get_table", table_id=TABLE_ID)
+        assert "abandoned" not in text
+
+
 class TestFindingATable:
     HOME = {
         "openTables": [
