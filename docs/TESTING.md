@@ -49,6 +49,26 @@ play - while the total read a comfortable 72% and nothing complained.
 coverage.py only knows a global `fail_under`, so the per-module check is its
 own script.
 
+## Unread fields
+
+```bash
+DUELS_TELEMETRY_PATH=/tmp/duels.jsonl   # then play
+python -c "from src import telemetry, json; \
+           print(json.dumps(telemetry.summarise('/tmp/duels.jsonl'), indent=2))"
+```
+
+Off unless the variable is set, appends only, and writes a line only when a
+state carries something no code reads - so the file is a list of surprises
+rather than a log.
+
+It exists because the obvious approach does not work. Duels.ink allows one game
+socket per player, so a watcher and the server take turns evicting each other
+with `4008 Stale connection`; the watcher only survives while the server is
+idle, which is while you are not playing. Every field found the hard way -
+`coconutCard`, `revealedCardsThisTurn`, `locationInstanceId`, the nine timer
+capabilities, `victoryReason`, `cardBadges` - would have shown up here on the
+turn it first appeared.
+
 ## Invented actions
 
 ```bash

@@ -14,6 +14,7 @@ implement Lorcana's rules - it just picks from what is offered.
 from typing import Any, Optional
 
 from .cards import CardCatalog
+from . import telemetry
 from .formatting import join_lines
 
 # Per-card capability flags from availableActions.cards[instanceId], mapped onto
@@ -692,6 +693,7 @@ def _prompt_ids(prompts: list) -> set:
 
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     """Produce the compact, agent-facing view of a game state."""
+    telemetry.note(game)
     me = game.get("myPlayer") or {}
     available = game.get("availableActions") or {}
     action_map = available.get("cards") or {}
@@ -744,6 +746,11 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "undo": _undo(game),
         "removal_vote": _removal_vote(game),
         "game_variant": game.get("gameVariant"),
+        # A Coconut game without Coconuts plays like a plain singleton deck
+        # and nothing says so. One was played to the end that way: the free
+        # play never appeared in a single legal move, and the absence read
+        # as "no ability available" rather than "the card is not there".
+        "coconuts_in_play": None,
         "lore_to_win": _lore_to_win(game),
         "player_count": 1 + len(_opponent_seats(game)),
         "me": {
@@ -778,6 +785,16 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             },
         ),
     }
+
+    variant = "".join(
+        c for c in str(game.get("gameVariant") or "") if c.isalpha()
+    ).lower()
+    if variant == "coconut":
+        payload["coconuts_in_play"] = sum(
+            1 for seat in [payload["me"], *opponents] if seat.get("coconut")
+        )
+    else:
+        payload.pop("coconuts_in_play", None)
 
     # A character carries the id of the location it is at; the name lives on
     # the location card, which is in somebody's items. Resolve it once here so
@@ -1109,6 +1126,14 @@ def game_state_markdown(payload: dict) -> str:
     if me.get("coconut"):
         sections.append(
             "## Your Coconut\n" + "\n".join(_card_line(c, seen=seen) for c in me["coconut"])
+        )
+    elif payload.get("coconuts_in_play") == 0:
+        sections.append(
+            "## No Coconut is in play\n"
+            "This game calls itself Coconut, but nobody has a Coconut card "
+            "on the board - the wire sends no `coconutCard` at all. The "
+            "format's whole engine is missing, so play the deck on its "
+            "cards alone and do not wait for an ability that cannot arrive."
         )
     if me.get("field"):
         sections.append(

@@ -387,6 +387,65 @@ State: `canRequestUndo`, `allowFreeUndo`, `undoTimeCost`,
 while a vote is live. A finished game also carries `victoryReason`, without
 which a win on lore and a win on a timeout read identically.
 
+## The Coconut pool
+
+**Coconut cards are not in `/api/cards`.** `GET /api/cards/coconut-011` is a
+404 and `duels_get_card` finds nothing, which is why a Coconut renders as a
+bare id. The records live in the client's `cards-data-*.js`, one JSON object
+per card:
+
+```json
+{"id":"coconut-011","name":"Mr. Incredible","subtitle":"Super Strong",
+ "full_name":"Mr. Incredible - Super Strong","colors":["ruby"],
+ "associated_card":"Mr. Incredible - Super Strong",
+ "associated_card_ids":["12-127","12-234"],
+ "max_copies_of_associated":4,
+ "translations":{"en":{"rules_text":"Whenever you play a Super character..."}}}
+```
+
+There are 25 of them. `scripts/` has no extractor; the one used lives in the
+session notes.
+
+**`max_copies_of_associated` is a deckbuilding exception**, and it explains a
+detail that otherwise looks like a bug: a singleton Coconut precon lists `4x`
+of one card. That card is the **associated card** (`12-127`), an ordinary card
+you draw and play. It is *not* the Coconut. The Coconut (`coconut-011`) is a
+separate permanent that is never in the 60, never drawn and never played.
+
+### A Coconut game can start without Coconuts
+
+Seen in a real 1v1: `gameVariant: "coconut"`, `loreToWin: 25`, both seats
+reporting `hasCoconut: true` with a `coconutCardId` - and **no `coconutCard`
+key on any player at all**. Not null; absent. 340 log entries never mentioned
+one, and the format's ability never appeared in a single legal move.
+
+The same diagnosis against a four-player game found `opponent.coconutCard`
+present and populated, with `justPlayed: false` - so in a working game the
+Coconut is simply in play from the first state, before the mulligan.
+
+The decks were identical to the precons they were cloned from (same 60 ids,
+same `coconutCardId`, same `4x`), so this is not a deckbuilding fault. The
+remaining difference is the game itself; the table had been started with two of
+its four seats filled. Unconfirmed, and worth re-testing before trusting a
+Coconut table.
+
+The renderer now counts Coconuts in play and says plainly when a Coconut game
+has none, because the absence is otherwise indistinguishable from "the ability
+is not available right now".
+
+## One socket per player
+
+Duels.ink allows **one game socket per player** and closes the older one with
+`4008 Stale connection`. That makes a second connection a fight rather than a
+failure: a watcher evicts the server's socket, the server's next call
+reconnects and evicts the watcher.
+
+So a watcher survives exactly as long as the MCP server stays idle - while
+spectating, after elimination, or once the game is over. It dies within
+seconds of you playing a turn. Watching a game *you* are playing therefore
+needs no socket at all: `src/telemetry.py` records what the server already
+received, behind `DUELS_TELEMETRY_PATH`.
+
 ## Prompts name nothing
 
 A prompt lists instance ids and stops there. `chooseCardFromRevealed` offers

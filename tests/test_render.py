@@ -15,6 +15,7 @@ from src.render import (
     game_state_markdown,
     render_game_state,
 )
+from src import telemetry
 from tests.fixtures import games, prompts
 
 
@@ -1015,3 +1016,124 @@ class TestAPromptNamesItsCards:
     async def test_a_game_with_no_prompt_has_no_legend(self, catalog):
         payload = await render_game_state(games.playing(), catalog)
         assert "prompt_cards" not in payload
+
+
+class TestACoconutGameWithoutCoconuts:
+    """Played one to the end without noticing.
+
+    The seat said hasCoconut, the deck carried coconut-004, the game reported
+    gameVariant "coconut" and a 25-lore goal - and no player had a coconutCard
+    on the wire at all. 340 log entries never mentioned one. The free play
+    simply never appeared in a legal move, which reads as "not available now"
+    rather than "the card does not exist".
+    """
+
+    def stripped(self, players=2):
+        """A Coconut game the way the server actually sent it."""
+        game = games.coconut_table(players=players)
+        game["myPlayer"].pop("coconutCard", None)
+        for seat in game["opponents"]:
+            seat.pop("coconutCard", None)
+        return game
+
+    async def test_the_absence_is_counted(self, catalog):
+        payload = await render_game_state(self.stripped(), catalog)
+        assert payload["coconuts_in_play"] == 0
+
+    async def test_the_absence_is_announced(self, catalog):
+        text = game_state_markdown(await render_game_state(self.stripped(), catalog))
+        assert "No Coconut is in play" in text
+        assert "cannot arrive" in text
+
+    async def test_a_working_coconut_game_says_nothing_of_the_sort(self, catalog):
+        payload = await render_game_state(games.coconut_table(), catalog)
+        assert payload["coconuts_in_play"] == 4
+        assert "No Coconut is in play" not in game_state_markdown(payload)
+
+    async def test_a_partial_absence_is_still_counted(self, catalog):
+        """One player having one is not the same as the format working."""
+        game = games.coconut_table()
+        game["myPlayer"].pop("coconutCard", None)
+        payload = await render_game_state(game, catalog)
+        assert payload["coconuts_in_play"] == 3
+        assert "No Coconut is in play" not in game_state_markdown(payload)
+
+    async def test_a_normal_game_is_not_asked_the_question(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert "coconuts_in_play" not in payload
+
+
+class TestTelemetry:
+    """Finding unread fields by watching a game you are playing does not work.
+
+    Duels.ink allows one game socket per player and evicts the older with
+    `4008 Stale connection`, so a watcher and the server's own connection take
+    turns killing each other - the watcher only survives while the server is
+    idle, which is while you are *not* playing. Reading what the server already
+    received sidesteps the whole problem.
+    """
+
+    def test_it_is_off_unless_switched_on(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(telemetry.ENV_VAR, raising=False)
+        target = tmp_path / "off.jsonl"
+        telemetry.note({"turnNumber": 1, "surpriseKey": 1})
+        assert not target.exists()
+
+    def test_an_unread_top_level_key_is_recorded(self, tmp_path, monkeypatch):
+        target = tmp_path / "seen.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        telemetry.note({"turnNumber": 3, "somethingNobodyReads": True})
+        rows = target.read_text(encoding="utf-8").splitlines()
+        assert len(rows) == 1
+        assert "somethingNobodyReads" in rows[0]
+
+    def test_a_fully_understood_state_writes_nothing(self, tmp_path, monkeypatch):
+        """Otherwise the file is a log of every turn rather than of surprises."""
+        target = tmp_path / "quiet.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        telemetry.note({"id": "g", "status": "playing", "turnNumber": 2,
+                        "myPlayer": {"lore": 0, "hand": []}})
+        assert not target.exists()
+
+    def test_the_stock_fixture_is_not_fully_understood(self, tmp_path, monkeypatch):
+        """`hasInkedThisTurn` rides on every real state and nothing reads it.
+
+        Recorded here rather than added to the known set, because pretending to
+        read a field is how it stays unread.
+        """
+        target = tmp_path / "fixture.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        telemetry.note(games.playing())
+        assert "hasInkedThisTurn" in target.read_text(encoding="utf-8")
+
+    def test_unread_card_and_prompt_keys_are_found(self, tmp_path, monkeypatch):
+        target = tmp_path / "cards.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        game = games.playing()
+        game["myPlayer"]["field"][0]["mysteryCardField"] = 1
+        game["pendingPrompts"] = [{"id": "p", "type": "boolean", "cardBadges": {}}]
+        telemetry.note(game)
+        row = target.read_text(encoding="utf-8")
+        assert "mysteryCardField" in row and "cardBadges" in row
+
+    def test_a_broken_path_never_breaks_a_turn(self, monkeypatch):
+        """A telemetry file is not worth losing a move in a timed game."""
+        monkeypatch.setenv(telemetry.ENV_VAR, "/nowhere/at/all/x.jsonl")
+        telemetry.note({"turnNumber": 1, "surprise": 1})
+
+    def test_the_summary_counts_repeats(self, tmp_path, monkeypatch):
+        target = tmp_path / "many.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        for _ in range(3):
+            telemetry.note({"turnNumber": 1, "repeatedUnknown": True})
+        assert telemetry.summarise(str(target))["top"]["repeatedUnknown"] == 3
+
+    async def test_reading_a_state_records_through_the_renderer(
+        self, catalog, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "wired.jsonl"
+        monkeypatch.setenv(telemetry.ENV_VAR, str(target))
+        game = games.playing()
+        game["somethingBrandNew"] = 1
+        await render_game_state(game, catalog)
+        assert "somethingBrandNew" in target.read_text(encoding="utf-8")
