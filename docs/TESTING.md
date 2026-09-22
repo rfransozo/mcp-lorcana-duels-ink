@@ -27,7 +27,7 @@ No network, no account, no games created. It finishes in under ten seconds.
 | `test_render.py` | Phase gates, zone filtering, move arguments, board description |
 | `test_gamews.py` | Connect, action round-trip, reconnection, registry - against a real socket |
 | `test_toolkit.py` | Error conversion, progress pings |
-| `test_tools_contract.py` | Naming, annotations, schemas and docstrings across all 46 tools |
+| `test_tools_contract.py` | Naming, annotations, schemas and docstrings across all 47 tools |
 | `test_tools_offline.py` | The tools end to end, plus the property test below |
 | `test_server.py` | `/health` and transport selection - the MCPize deploy contract |
 | `test_live_smoke.py` | Opt-in, read-only, anonymous checks against the real site |

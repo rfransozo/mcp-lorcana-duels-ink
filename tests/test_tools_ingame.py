@@ -257,3 +257,107 @@ class TestTheEscapeHatch:
         )
         data = await call_json(authed_mcp_client, "duels_list_active_games")
         assert games.GAME_ID not in (data.get("connected_game_ids") or [])
+
+
+class TestPlayingAWholeTurn:
+    """Round trips are what the clock is actually spent on.
+
+    Two games were lost on time without a single bad play: a turn is two
+    minutes of real time and each separate tool call spends some of it. This
+    tool exists to make a turn cost one call instead of four.
+    """
+
+    HAND = games.HAND_FLOTSAM
+    FIELD = games.FIELD_ELSA
+
+    async def plan(self, router, mcp_client, steps, game=None):
+        return await with_game(
+            router, mcp_client, game, tool="duels_play_turn", steps=steps
+        )
+
+    async def test_the_whole_plan_is_sent_in_order(self, router, mcp_client):
+        server, text = await self.plan(
+            router,
+            mcp_client,
+            [
+                {"do": "ink", "card": self.HAND},
+                {"do": "quest", "card": self.FIELD},
+                {"do": "end"},
+            ],
+        )
+        sent = [m["action"]["type"] for m in server.received if m.get("action")]
+        assert sent == ["ADD_TO_INK", "QUEST", "END_TURN"]
+        assert "Played 3 of 3 steps" in text
+
+    async def test_ending_carries_what_turn_it_meant_to_end(self, router, mcp_client):
+        """Otherwise a plan that went stale ends somebody else's turn."""
+        server, _text = await self.plan(router, mcp_client, [{"do": "end"}])
+        end = server.received[-1]["action"]
+        assert end["expectedTurnNumber"] == games.base_game()["turnNumber"]
+        assert end["expectedCurrentPlayer"] == games.base_game()["currentPlayer"]
+
+    async def test_a_challenge_becomes_an_attack(self, router, mcp_client):
+        server, _text = await self.plan(
+            router,
+            mcp_client,
+            [{"do": "challenge", "card": self.FIELD, "target": games.OPP_PETE}],
+        )
+        sent = server.received[-1]["action"]
+        assert sent["type"] == "ATTACK"
+        assert sent["attackerInstanceId"] == self.FIELD
+        assert sent["targetInstanceId"] == games.OPP_PETE
+
+    async def test_a_shift_travels_with_the_play(self, router, mcp_client):
+        server, _text = await self.plan(
+            router,
+            mcp_client,
+            [{"do": "play", "card": self.HAND, "shift_target": self.FIELD}],
+        )
+        assert server.received[-1]["action"]["shiftTargetInstanceId"] == self.FIELD
+
+    async def test_a_bad_step_costs_nothing(self, router, mcp_client):
+        """Half a turn is worse than none: the board has moved and the plan
+        that described it is gone."""
+        server, text = await self.plan(
+            router,
+            mcp_client,
+            [{"do": "ink", "card": self.HAND}, {"do": "dance", "card": self.HAND}],
+        )
+        assert text.startswith("Error:")
+        assert "steps[1]" in text and "dance" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_a_step_missing_its_card_names_the_index(self, router, mcp_client):
+        _server, text = await self.plan(router, mcp_client, [{"do": "quest"}])
+        assert text.startswith("Error:") and "steps[0]" in text and "card" in text
+
+    async def test_a_challenge_without_a_target_is_refused(self, router, mcp_client):
+        _server, text = await self.plan(
+            router, mcp_client, [{"do": "challenge", "card": self.FIELD}]
+        )
+        assert text.startswith("Error:") and "target" in text
+
+    async def test_a_waiting_prompt_stops_the_plan(self, router, mcp_client):
+        """The position now needs a decision the plan could not have known
+        about, so the rest is handed back rather than guessed at."""
+        _server, text = await self.plan(
+            router,
+            mcp_client,
+            [{"do": "quest", "card": self.FIELD}, {"do": "end"}],
+            game=games.with_prompt(prompts.BOOLEAN),
+        )
+        assert "Stopped:" in text and "duels_respond_to_prompt" in text
+        assert "Not taken:" in text and "end" in text
+
+    async def test_nothing_is_sent_once_a_prompt_is_waiting(self, router, mcp_client):
+        server, _text = await self.plan(
+            router,
+            mcp_client,
+            [{"do": "quest", "card": self.FIELD}],
+            game=games.with_prompt(prompts.BOOLEAN),
+        )
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_an_empty_plan_says_what_one_looks_like(self, router, mcp_client):
+        _server, text = await self.plan(router, mcp_client, [])
+        assert text.startswith("Error:")

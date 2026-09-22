@@ -1,7 +1,7 @@
 # MCP Lorcana — Duels.ink
 
 Play and manage **Disney Lorcana** on [Duels.ink](https://duels.ink) from an AI
-assistant. 46 tools covering matches, decks, the card catalog, statistics,
+assistant. 47 tools covering matches, decks, the card catalog, statistics,
 replays and the social side of the site.
 
 > Unofficial. Not affiliated with, endorsed by, or connected to Duels.ink,
@@ -57,6 +57,7 @@ duels_browse_public_decks   → 1000+ community lists, no auth
 duels_start_bot_game        → returns the opening position
 duels_get_game_state        → the board, and the moves that are legal
 duels_quest / duels_play_card / duels_end_turn → play
+duels_play_turn             → a whole turn in one call, for timed games
 ```
 
 Every state comes back with a `legal_moves` list, so the assistant plays by

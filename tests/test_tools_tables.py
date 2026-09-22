@@ -298,6 +298,57 @@ class TestTableSettings:
             assert action in text
 
 
+class TestTheClockIsAnnounced:
+    """Two games were lost on the clock without a single bad play."""
+
+    def _home(self, router, timer):
+        router.on(
+            "/api/home/data",
+            lambda _r: httpx.Response(200, json={"openTables": [
+                {"id": TABLE_ID, "hostName": "Bumzie", "format": "Coconut",
+                 "maxSeats": 4, "seatsFilled": 1, "timerPreset": timer},
+            ]}),
+        )
+
+    async def test_a_timed_table_is_flagged_in_the_listing(
+        self, router, authed_mcp_client
+    ):
+        self._home(router, "standard")
+        payload = await call_json(authed_mcp_client, "duels_list_open_tables")
+        assert payload["tables"][0]["timed"] is True
+
+    async def test_an_untimed_table_is_not_flagged(self, router, authed_mcp_client):
+        self._home(router, "none")
+        payload = await call_json(authed_mcp_client, "duels_list_open_tables")
+        assert payload["tables"][0]["timed"] is False
+
+    async def test_untimed_only_skips_the_clocked_ones(self, router, authed_mcp_client):
+        self._home(router, "blitz")
+        text = await call_text(
+            authed_mcp_client, "duels_list_open_tables", untimed_only=True
+        )
+        assert "No open tables" in text
+
+    async def test_sitting_at_a_clocked_table_says_so(self, router, authed_mcp_client):
+        """The clock runs on real time; nothing else in the reply mentions it."""
+        timed = view()
+        timed["view"]["config"]["timerPreset"] = "standard"
+        routes(router, table=timed)
+        text = await call_text(
+            authed_mcp_client, "duels_join_table", table_id=TABLE_ID
+        )
+        assert "standard clock" in text and "duels_play_turn" in text
+
+    async def test_an_untimed_table_says_nothing_about_clocks(
+        self, router, authed_mcp_client
+    ):
+        routes(router)
+        text = await call_text(
+            authed_mcp_client, "duels_join_table", table_id=TABLE_ID
+        )
+        assert "clock" not in text
+
+
 class TestMatchFormatAndUndo:
     """Two settings the panel offers that the wire spells its own way."""
 

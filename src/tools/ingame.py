@@ -28,6 +28,76 @@ PROMPT_RESPONSE_TYPES = {
 }
 
 
+# One turn's worth of actions, in the order a turn is actually played.
+TURN_STEPS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ink": ("ADD_TO_INK", ("card",)),
+    "play": ("PLAY_CARD", ("card",)),
+    "quest": ("QUEST", ("card",)),
+    "challenge": ("ATTACK", ("card", "target")),
+    "end": ("END_TURN", ()),
+}
+
+
+def _turn_action(step: dict, game: dict) -> dict:
+    """Turn one plan step into the action the server expects."""
+    kind = str(step.get("do") or "").strip().lower()
+    wire, required = TURN_STEPS[kind]
+
+    if kind == "end":
+        # The expectations are what stop an END_TURN sent from a stale plan
+        # ending somebody else's turn instead.
+        return {
+            "type": wire,
+            "expectedTurnNumber": game.get("turnNumber"),
+            "expectedCurrentPlayer": game.get("currentPlayer"),
+        }
+
+    action: dict[str, Any] = {"type": wire}
+    if kind == "challenge":
+        action["attackerInstanceId"] = step["card"]
+        action["targetInstanceId"] = step["target"]
+    else:
+        action["cardInstanceId"] = step["card"]
+
+    if kind == "play":
+        if step.get("shift_target"):
+            action["shiftTargetInstanceId"] = step["shift_target"]
+        if step.get("singers"):
+            action["singerInstanceIds"] = list(step["singers"])
+    del required
+    return action
+
+
+def _check_turn_plan(steps: list) -> None:
+    """Reject a malformed plan before any of it reaches the table.
+
+    Half a turn is worse than none: the board has moved, the plan that
+    described it is gone, and the caller has to work out what landed. So the
+    whole plan is checked first and a bad step costs nothing.
+    """
+    if not steps:
+        raise DuelsError(
+            "steps is empty. Give the turn as a list, e.g. "
+            "[{'do': 'ink', 'card': '<id>'}, {'do': 'quest', 'card': '<id>'}, "
+            "{'do': 'end'}]."
+        )
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise DuelsError(f"steps[{index}] must be an object, got {type(step).__name__}.")
+        kind = str(step.get("do") or "").strip().lower()
+        if kind not in TURN_STEPS:
+            raise DuelsError(
+                f"steps[{index}].do must be one of: {', '.join(TURN_STEPS)}. "
+                f"Got {step.get('do')!r}."
+            )
+        for field in TURN_STEPS[kind][1]:
+            if not step.get(field):
+                raise DuelsError(
+                    f"steps[{index}] is '{kind}' and needs '{field}' "
+                    "(an instanceId from duels_get_game_state)."
+                )
+
+
 async def _conn(app: AppContext, game_id: str) -> GameConnection:
     return await app.games.get(game_id, app.games.session_for(game_id))
 
@@ -1144,3 +1214,116 @@ async def duels_concede(
     result = await _state_reply(app, conn, response_format, f"Game ended ({action}).")
     await app.games.drop(game_id)
     return result
+
+
+@mcp.tool(
+    name="duels_play_turn",
+    annotations={
+        "title": "Play a Whole Turn",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@tool_errors
+async def duels_play_turn(
+    ctx: Context,
+    game_id: GameId,
+    steps: Annotated[
+        list[dict[str, Any]],
+        Field(
+            description=(
+                "The turn, in order. Each step is {'do': ...} plus its ids:\n"
+                "  {'do': 'ink', 'card': '<hand instanceId>'}\n"
+                "  {'do': 'play', 'card': '<hand instanceId>'} "
+                "(optional 'shift_target', 'singers')\n"
+                "  {'do': 'quest', 'card': '<board instanceId>'}\n"
+                "  {'do': 'challenge', 'card': '<yours>', 'target': '<theirs>'}\n"
+                "  {'do': 'end'}"
+            ),
+            # No min_length: an empty plan is answered by _check_turn_plan with
+            # an example of what one looks like, which teaches more than
+            # pydantic's "List should have at least 1 item".
+            max_length=24,
+        ),
+    ],
+    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
+) -> str:
+    """Plays a planned sequence of moves in one call, stopping at the first prompt or refusal.
+
+    **Use this instead of one tool per move whenever the game is timed.** A
+    turn is two minutes of real time and every separate call spends some of it
+    thinking; four calls have lost a game twice. This spends one.
+
+    It stops rather than improvising. A prompt means the position now needs a
+    decision the plan could not have known about, so it hands back the prompt
+    and the steps it has not taken; answer with duels_respond_to_prompt and
+    call this again with the rest. A refusal stops it the same way, with the
+    real legal moves attached.
+
+    Plan the whole turn from one duels_get_game_state read: ink first, then
+    plays, then quests and challenges, then {'do': 'end'}.
+
+    Examples:
+    - "Ink this, play that, quest with it, end" -> steps=[{'do':'ink','card':'<a>'}, {'do':'play','card':'<b>'}, {'do':'quest','card':'<b>'}, {'do':'end'}]
+    - "Shift Beast onto the board one and swing" -> steps=[{'do':'play','card':'<new>','shift_target':'<old>'}, {'do':'challenge','card':'<new>','target':'<theirs>'}]
+    - "Just end the turn" -> steps=[{'do':'end'}]
+
+    Args:
+        ctx (Context): Injected by FastMCP.
+        game_id (str): Game UUID.
+        steps (list[dict]): The planned turn, in order.
+        response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: {"done": [...], "remaining": [...], "stopped_because": str | null}
+        followed by the resulting state.
+
+    Error Handling:
+        A malformed plan is refused before anything is sent, naming the step
+        index - so a typo never leaves a turn half played.
+    """
+    app = app_ctx(ctx)
+    _check_turn_plan(steps)
+    conn = await _conn(app, game_id)
+
+    done: list[str] = []
+    stopped: Optional[str] = None
+    index = 0
+    for index, step in enumerate(steps):
+        game = await conn.refresh()
+        if game.get("pendingPrompts"):
+            stopped = (
+                "a decision is waiting - answer it with duels_respond_to_prompt, "
+                "then call duels_play_turn again with the remaining steps"
+            )
+            break
+        try:
+            await _send(app, conn, _turn_action(step, game))
+        except DuelsError as refusal:
+            stopped = str(refusal)
+            break
+        done.append(f"{step['do']} {step.get('card', '')}".strip())
+    else:
+        index = len(steps)
+
+    remaining = [dict(s) for s in steps[index:]] if stopped else []
+
+    game = await conn.refresh()
+    payload = await render_game_state(game, app.catalog)
+    payload["done"] = done
+    payload["remaining"] = remaining
+    payload["stopped_because"] = stopped
+
+    def md(p: dict) -> str:
+        head = [f"_Played {len(done)} of {len(steps)} steps: {', '.join(done) or 'none'}._"]
+        if stopped:
+            head.append("")
+            head.append(f"**Stopped:** {stopped}")
+            if remaining:
+                left = ", ".join(f"{s['do']} {s.get('card', '')}".strip() for s in remaining)
+                head.append(f"**Not taken:** {left}")
+        return join_lines([*head, "", game_state_markdown(p)])
+
+    return render(payload, response_format, md)

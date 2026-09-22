@@ -1148,6 +1148,17 @@ async def duels_list_open_tables(
         bool,
         Field(default=True, description="Only tables that still have a free seat."),
     ] = True,
+    untimed_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Only tables with no turn timer. A timed turn is two minutes of "
+                "real time and it is spent whether or not anyone is thinking, so "
+                "an untimed table is the safe one when latency is unpredictable."
+            ),
+        ),
+    ] = False,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Returns the public tables anyone can join right now, with their format and free seats.
@@ -1170,6 +1181,7 @@ async def duels_list_open_tables(
         ctx (Context): Injected by FastMCP.
         game_format (Optional[str]): Filter by format.
         with_space (bool): Only tables with a free seat. Default True.
+        untimed_only (bool): Skip tables with a turn timer. Default False.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
@@ -1193,6 +1205,9 @@ async def duels_list_open_tables(
                 continue
         if with_space and cap and filled >= cap:
             continue
+        timer = row.get("timerPreset")
+        if untimed_only and timer not in (None, "none"):
+            continue
         tables.append(
             {
                 "table_id": row.get("id"),
@@ -1201,7 +1216,8 @@ async def duels_list_open_tables(
                 "seats_filled": filled,
                 "max_seats": cap,
                 "seats_open": max(0, cap - filled),
-                "timer_preset": row.get("timerPreset"),
+                "timer_preset": timer,
+                "timed": timer not in (None, "none"),
                 "last_active": row.get("lastActiveAt"),
             }
         )
@@ -1316,7 +1332,18 @@ async def duels_join_table(
 
     def md(p: dict) -> str:
         head = "" if p.get("my_seat") is None else f"_Seated at seat {p['my_seat']}._"
-        tail = "Ready up with `duels_configure_table` action='ready'."
-        return join_lines([head, "", _table_md(p), "", tail])
+        tail = ["Ready up with `duels_configure_table` action='ready'."]
+        if p.get("timer_preset") not in (None, "none"):
+            # Two games were lost here without a single bad play: the clock
+            # runs on real time, so anything that pauses between tool calls
+            # spends it. One call per turn is the defence.
+            tail.insert(
+                0,
+                f"**This table is on a {p['timer_preset']} clock.** A turn is spent "
+                "in real time whether or not anyone is thinking, and running out "
+                "eliminates you outright - play each turn with `duels_play_turn` "
+                "in a single call rather than one tool per move.",
+            )
+        return join_lines([head, "", _table_md(p), "", *tail])
 
     return render(payload, response_format, md)
