@@ -307,22 +307,59 @@ class TestOtherModes:
         """Creating without the entitlement fails server-side; asking first
         gives the caller a reason instead."""
         router.json_on("/api/playground/access", {"hasAccess": False})
-        text = await call_text(
-            authed_mcp_client, "duels_create_playground", seed="shift-testing-1"
-        )
+        text = await call_text(authed_mcp_client, "duels_create_playground")
         assert text.startswith("Error:")
-        assert not any(
-            c.url.path == "/api/playground/create-from-spec" for c in router.calls
-        )
+        assert not any(c.url.path == "/api/playground/create" for c in router.calls)
 
     async def test_playground_creates_when_allowed(self, router, authed_mcp_client):
+        """`/create`, not `/create-from-spec`.
+
+        The tool posted to the replay-analysis endpoint, which wants a
+        serialised position under `seed` - so every call it ever made was
+        refused with 'Missing or invalid "seed"'.
+        """
         router.json_on("/api/playground/access", {"hasAccess": True})
-        router.json_on("/api/playground/create-from-spec", {"gameId": "pg-1"})
-        text = await call_text(
-            authed_mcp_client, "duels_create_playground", seed="shift-testing-1"
+        router.json_on("/api/playground/create", {"gameId": "pg-1"})
+        text = await call_text(authed_mcp_client, "duels_create_playground")
+        assert not text.startswith("Error:") and "pg-1" in text
+        assert any(c.url.path == "/api/playground/create" for c in router.calls)
+
+    async def test_an_empty_playground_skips_setup(self, router, authed_mcp_client):
+        """There is nothing to mulligan when neither side has a deck."""
+        router.json_on("/api/playground/access", {"hasAccess": True})
+        router.json_on("/api/playground/create", {"gameId": "pg-1"})
+        await call_text(authed_mcp_client, "duels_create_playground")
+        sent = next(c for c in router.calls if c.url.path == "/api/playground/create")
+        assert b'"skipSetup": true' in sent.content or b'"skipSetup":true' in sent.content
+
+    async def test_a_coconut_playground_carries_both_coconuts(
+        self, router, authed_mcp_client
+    ):
+        """The only way to exercise the format without three other players."""
+        router.json_on("/api/playground/access", {"hasAccess": True})
+        router.json_on("/api/playground/create", {"gameId": "pg-1"})
+        router.json_on(
+            f"/api/decks/{deck_fixtures.DECK_ID}",
+            deck_fixtures.detail(coconutCardId="coconut-011"),
         )
-        assert not text.startswith("Error:")
-        assert any(c.url.path == "/api/playground/create-from-spec" for c in router.calls)
+        text = await call_text(
+            authed_mcp_client,
+            "duels_create_playground",
+            player1_deck_id=deck_fixtures.DECK_ID,
+            game_variant="coconut",
+        )
+        sent = next(c for c in router.calls if c.url.path == "/api/playground/create")
+        assert b"coconut-011" in sent.content  # the deck's own, not the default
+        assert b"player1CoconutCardId" in sent.content
+        assert b"player2CoconutCardId" in sent.content
+        assert b"player1DeckCardIds" in sent.content
+        assert "25 lore" in text
+
+    async def test_a_nonsense_variant_is_refused(self, authed_mcp_client):
+        text = await call_text(
+            authed_mcp_client, "duels_create_playground", game_variant="packrush"
+        )
+        assert text.startswith("Error:") and "coconut" in text
 
 
 class TestCoconutDecks:

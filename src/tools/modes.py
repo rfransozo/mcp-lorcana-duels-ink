@@ -6,6 +6,7 @@ from fastmcp import Context
 from pydantic import Field
 
 from ..app import app_ctx, mcp
+from ..client import DuelsError
 from ..formatting import as_json, empty_result, join_lines, render
 from ..models import ResponseFmt, ResponseFormat
 from ..toolkit import tool_errors
@@ -195,86 +196,178 @@ async def duels_create_sealed(
 @tool_errors
 async def duels_create_playground(
     ctx: Context,
-    seed: Annotated[
-        str,
-        Field(
-            description=(
-                "Seed for the sandbox, which makes the setup reproducible. Any stable "
-                "string works, e.g. 'shift-testing-1'."
-            ),
-            min_length=1,
-            max_length=64,
-        ),
-    ],
-    spec: Annotated[
-        Optional[dict],
+    player1_deck_id: Annotated[
+        Optional[str],
         Field(
             default=None,
             description=(
-                "Optional starting setup - decks, board state and lore. Omit for an "
-                "empty sandbox you then arrange with duels_send_game_action."
+                "Deck for player 1 - your own id or a public one. Omit for an "
+                "empty board you fill with PLAYGROUND_SPAWN_CARD."
             ),
         ),
     ] = None,
+    player2_deck_id: Annotated[
+        Optional[str],
+        Field(default=None, description="Deck for player 2. Omit for an empty board."),
+    ] = None,
+    game_variant: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "'coconut' to give each side a Coconut card and play to 25 lore. "
+                "Omit for a normal game to 20."
+            ),
+            max_length=16,
+        ),
+    ] = None,
+    first_player: Annotated[
+        int,
+        Field(default=1, description="Which side takes the first turn.", ge=1, le=2),
+    ] = 1,
+    skip_setup: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Skip the mulligan and start with empty hands. Forced when neither "
+                "side has a deck, since there is nothing to draw."
+            ),
+        ),
+    ] = False,
+    name: Annotated[
+        Optional[str],
+        Field(default=None, description="Optional label for the sandbox.", max_length=80),
+    ] = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
-    """Creates a playground: a sandbox game where you can set up any board position you like.
+    """Creates a playground: a sandbox game where you control both sides and set up any position.
 
-    Use it to test interactions, rehearse a line, or reproduce a rules question -
-    cards can be spawned directly and lore, damage and exertion set by hand
-    instead of having to play a real game into that position.
+    The only way to exercise a format without opponents. A Coconut sandbox
+    gives each side its Coconut and a 25-lore goal, so the format can be tested
+    without finding three other players and hoping the table fills.
 
-    Once created, drive it with the normal in-game tools, and arrange it with
-    duels_send_game_action using the PLAYGROUND_* actions:
-    PLAYGROUND_SPAWN_CARD, PLAYGROUND_SET_LORE, PLAYGROUND_SET_DAMAGE,
-    PLAYGROUND_SET_EXERTED, PLAYGROUND_MOVE_CARD, PLAYGROUND_REMOVE_CARD,
-    PLAYGROUND_IMPORT_DECK, PLAYGROUND_REORDER_DECK.
+    Arrange it with duels_send_game_action and the PLAYGROUND_* actions, then
+    play it with the normal in-game tools. Spawning takes the card's catalog id:
+    {'type': 'PLAYGROUND_SPAWN_CARD', 'cardId': '10-16', 'zone': 'hand',
+    'targetPlayer': 1, 'actingAs': 1} - zones are hand, inkwell, field, items,
+    discard and deck.
 
-    Playground access is gated per account; duels_whoami reports your features.
-    Do NOT use it for real games - results do not count.
+    Do NOT use it for anything that should count: playground results are not
+    games. Access is per account; duels_whoami reports your features.
 
     Examples:
-    - "Set up a board to test Shift" -> seed='shift-test-1'
-    - "Recreate this position" -> seed, then arrange it with duels_send_game_action
+    - "Sandbox to test my Coconut deck" -> player1_deck_id=..., game_variant='coconut'
+    - "Empty board to test one interaction" -> call with no arguments
+    - "Both sides, mine against a precon" -> player1_deck_id=..., player2_deck_id=...
 
     Args:
         ctx (Context): Injected by FastMCP.
-        seed (str): Reproducibility seed.
-        spec (Optional[dict]): Starting setup.
+        player1_deck_id (Optional[str]): Deck for player 1.
+        player2_deck_id (Optional[str]): Deck for player 2.
+        game_variant (Optional[str]): 'coconut' or omitted.
+        first_player (int): 1 or 2. Default 1.
+        skip_setup (bool): Skip the mulligan. Default False.
+        name (Optional[str]): Label for the sandbox.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
-        str: {"game_id": str, ...} for the sandbox game.
+        str: {"game_id": str, "variant": str | null, "decks": {...}} - play it
+        with duels_get_game_state.
 
     Error Handling:
-        Returns 'Missing or invalid "seed"' when the seed is empty, and a
-        permission error when the account lacks playground access.
+        Says which deck could not be read when a deck id is wrong, and returns
+        Duels.ink's own message when the account lacks playground access.
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a playground")
 
+    # Checking the argument before the network keeps a typo from costing a
+    # round-trip, and keeps the error about the typo.
+    variant = (game_variant or "").strip().lower() or None
+    if variant and variant != "coconut":
+        raise DuelsError(
+            f"game_variant must be 'coconut' or omitted. Got {game_variant!r}."
+        )
+
+    # Asking first turns a bare server refusal into a reason the caller can act
+    # on - playground access is granted per account.
     access = await app.client.get("/api/playground/access")
     if isinstance(access, dict) and access.get("hasAccess") is False:
-        return (
-            "Error: this account does not have playground access. It is an opt-in feature "
-            "on Duels.ink - enable it on the site first."
+        raise DuelsError(
+            "This account does not have playground access. duels_whoami reports "
+            "which features are enabled."
         )
 
-    body: dict[str, Any] = {"seed": seed}
-    if spec:
-        body["spec"] = spec
-    data = await app.client.post("/api/playground/create-from-spec", body)
+    async def deck_of(deck_id: Optional[str]) -> dict:
+        if not deck_id:
+            return {}
+        data = await app.client.get(f"/api/decks/{deck_id}")
+        deck = (data or {}).get("deck") or data or {}
+        if not deck.get("cardIds"):
+            raise DuelsError(
+                f"Deck {deck_id} came back without a card list. Check the id with "
+                "duels_list_my_decks or duels_browse_public_decks."
+            )
+        return deck
+
+    one, two = await deck_of(player1_deck_id), await deck_of(player2_deck_id)
+
+    # The endpoint takes card lists, not deck ids, and it is /create - not
+    # /create-from-spec, which is the replay-analysis path and wants a
+    # serialised position under `seed`. Pointed there, every call was refused
+    # with 'Missing or invalid "seed"'.
+    body: dict[str, Any] = {
+        "firstPlayer": first_player,
+        "deckOutWin": False,
+        "skipSetup": bool(skip_setup or (not one.get("cardIds") and not two.get("cardIds"))),
+    }
+    if name:
+        body["name"] = name
+    if one.get("cardIds"):
+        body["player1DeckCardIds"] = list(one["cardIds"])
+    if two.get("cardIds"):
+        body["player2DeckCardIds"] = list(two["cardIds"])
+    if variant == "coconut":
+        body["gameVariant"] = "coconut"
+        # Each side needs one; a deck's own choice is used when it has one.
+        body["player1CoconutCardId"] = one.get("coconutCardId") or "coconut-001"
+        body["player2CoconutCardId"] = two.get("coconutCardId") or "coconut-002"
+
+    data = await app.client.post("/api/playground/create", body)
     game_id = (data or {}).get("gameId") or (data or {}).get("id")
-    payload = {"game_id": game_id, "raw": data}
+    payload = {
+        "game_id": game_id,
+        "variant": variant,
+        "decks": {
+            "player1": one.get("name") or player1_deck_id,
+            "player2": two.get("name") or player2_deck_id,
+        },
+        "coconuts": {
+            "player1": body.get("player1CoconutCardId"),
+            "player2": body.get("player2CoconutCardId"),
+        }
+        if variant == "coconut"
+        else None,
+    }
 
     def md(p: dict) -> str:
-        return join_lines(
-            [
-                f"# Playground created: `{p['game_id']}`",
-                "",
-                "Arrange it with `duels_send_game_action` using the PLAYGROUND_* actions, "
-                "then play it with the normal in-game tools.",
-            ]
-        )
+        lines = [f"# Playground created: `{p['game_id']}`", ""]
+        if p.get("variant"):
+            lines.append(
+                f"- **Variant**: {p['variant']} - each side has a Coconut, 25 lore to win"
+            )
+        for side in ("player1", "player2"):
+            deck = (p.get("decks") or {}).get(side)
+            coco = (p.get("coconuts") or {}).get(side)
+            where = f"{deck or 'empty board'}"
+            lines.append(f"- **{side}**: {where}{f' ({coco})' if coco else ''}")
+        lines += [
+            "",
+            "Read it with `duels_get_game_state`, arrange it with "
+            "`duels_send_game_action` and the PLAYGROUND_* actions, and play it "
+            "with the normal in-game tools.",
+        ]
+        return join_lines(lines)
 
     return render(payload, response_format, md)

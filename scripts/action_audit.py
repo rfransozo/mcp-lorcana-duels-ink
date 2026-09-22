@@ -23,11 +23,14 @@ import httpx
 BASE = "https://duels.ink"
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
-# Uppercase literals that are ours rather than the wire's.
+# Uppercase literals that are ours rather than the wire's. Every `DUELS_`
+# name is one of our environment variables - the site has never sent an action
+# under that prefix - so they are excluded by rule, not one at a time.
+NOT_ACTION_PREFIXES = ("DUELS_",)
 NOT_ACTIONS = {
-    "DUELS_BASE_URL", "DUELS_SESSION_COOKIE", "DUELS_LOG_LEVEL", "SERVER_NAME",
-    "HEARTBEAT_SECONDS", "POLL_SECONDS", "INFO", "UPSTREAM_PORT_START",
-    "MARKDOWN", "JSON", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "UTF",
+    "SERVER_NAME", "HEARTBEAT_SECONDS", "POLL_SECONDS", "INFO",
+    "UPSTREAM_PORT_START", "MARKDOWN", "JSON", "GET", "POST", "PUT", "PATCH",
+    "DELETE", "HEAD", "UTF",
 }
 
 
@@ -36,7 +39,7 @@ def ours() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for path in SRC.rglob("*.py"):
         for name in re.findall(r'"([A-Z][A-Z0-9_]{3,})"', path.read_text(encoding="utf-8")):
-            if name not in NOT_ACTIONS:
+            if name not in NOT_ACTIONS and not name.startswith(NOT_ACTION_PREFIXES):
                 found.setdefault(name, set()).add(path.name)
     return found
 

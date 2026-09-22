@@ -433,6 +433,60 @@ The renderer now counts Coconuts in play and says plainly when a Coconut game
 has none, because the absence is otherwise indistinguishable from "the ability
 is not available right now".
 
+A Coconut **playground** since built both sides' Coconuts without trouble, and
+our own renderer showed them. So neither the format nor the renderer is at
+fault, and the 1v1 stands as the anomaly it looked like.
+
+## The playground
+
+A sandbox where you control both seats. The only way to exercise a format
+without finding opponents, and the only way to reach a position on purpose.
+
+```http
+POST /api/playground/create
+{"firstPlayer": 1, "name": "...", "skipSetup": false, "deckOutWin": false,
+ "player1DeckCardIds": ["10-71", ...], "player2DeckCardIds": [...],
+ "gameVariant": "coconut",
+ "player1CoconutCardId": "coconut-011", "player2CoconutCardId": "coconut-002"}
+```
+
+It takes **card lists, not deck ids**, and `skipSetup` must be true when
+neither side has a deck - there is nothing to mulligan. `GET
+/api/playground/access` answers `{"hasAccess": bool}`; the entitlement is per
+account.
+
+**`/api/playground/create-from-spec` is a different endpoint.** It is the
+replay-analysis path and wants a serialised position under `seed`. Our tool was
+pointed at it, so every playground it ever tried to create was refused with
+`Missing or invalid "seed"` - a tool that had never once worked.
+
+Arrange the board with the `PLAYGROUND_*` actions. Each carries `actingAs`,
+the seat you are speaking for:
+
+| Action | Payload |
+|---|---|
+| `PLAYGROUND_SPAWN_CARD` | `{cardId, zone, targetPlayer, variant, actingAs}` |
+| `PLAYGROUND_REMOVE_CARD` | `{cardInstanceId, actingAs}` |
+| `PLAYGROUND_MOVE_CARD` | `{cardInstanceId, toZone, toPlayer, actingAs}` |
+| `PLAYGROUND_SET_DAMAGE` | `{cardInstanceId, damage, actingAs}` |
+
+Spawning takes the **catalog** id (`cardId: "10-16"`), not `definitionId` and
+not an instance id. Zones are `hand`, `inkwell`, `field`, `items`, `discard`
+and `deck`.
+
+### What a Coconut playground does and does not prove
+
+It **does** put a Coconut in play for each side, from the first state, before
+the mulligan - confirmed by reading it back through our own tools.
+
+`availableActions.cards[<coconut instanceId>]` is `{}`. That is not evidence of
+anything broken: a Coconut whose text reads "Whenever you play a ..." triggers,
+and a triggered ability never appears among a card's available actions. What
+remains untested is whether such a trigger fires - which needs the ink and the
+associated card to meet its condition, not a fresh board.
+
+Playground results are not games: they do not count, rank or appear in history.
+
 ## One socket per player
 
 Duels.ink allows **one game socket per player** and closes the older one with
