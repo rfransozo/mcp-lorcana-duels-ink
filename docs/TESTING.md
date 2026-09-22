@@ -49,6 +49,24 @@ play - while the total read a comfortable 72% and nothing complained.
 coverage.py only knows a global `fail_under`, so the per-module check is its
 own script.
 
+## Invented actions
+
+```bash
+python scripts/action_audit.py
+```
+
+Diffs every uppercase literal in `src/` against the action types the live site
+actually sends, and fails on anything we send that it does not.
+
+This guards a failure with no symptom. `START_GAME` reads perfectly, was
+refused as *"Invalid table action"*, and left the table in `assembling` -
+indistinguishable from a table waiting for another player. It shipped, and the
+tests agreed with it, because they encoded the same guess. Only the site's own
+bundle could tell them apart.
+
+Like the coverage gate it is a script rather than a test: it needs the network,
+and a suite that fails when wifi drops is a suite people learn to ignore.
+
 It is a script rather than a test because as a test it would fail whenever
 someone ran a subset of the suite under coverage, which is a normal thing to do
 and not a defect.
