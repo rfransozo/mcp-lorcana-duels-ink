@@ -350,12 +350,25 @@ the Coconut format and the only way into a game with more than one opponent:
 neither has a queue, and neither runs against the bot.
 
 ```
-POST /api/table/create              {applyDefaultPreset: true}
+POST /api/table/create              {applyDefaultPreset, gameFormat, timerPreset,
+                                     loreToWin, visibility, ...}   <- top level
+                                    -> {tableId, url, view}
 GET  /api/table/{id}/view           -> {"view": {...}}      <- note the envelope
 POST /api/table/{id}/action         {"action": {...}}
-GET  /api/table/{id}/ws-token       the lobby has its own socket
+GET  /api/table/{id}/ws-token       -> {"token": "..."}     <- no host, see below
 GET  /api/home/data                 -> {openTables, liveGames, stats}
 ```
+
+**At create the settings go at the top level, not under `config`.** Nesting
+them the way `UPDATE_SETTINGS` wants is answered 200 with a table that ignored
+every one of them. And the `config` that comes back is **sparse** - a default
+table carries three keys, and the rest appear only once set, so an absent key
+means the default rather than false.
+
+**Creation takes its settings at the top level.** A nested `config` object is
+accepted and silently dropped, so a table created "as Coconut" that way comes
+out Core. `url` is the shareable invite link. `seats` is the exception: no
+creation field sets it, so it needs an `UPDATE_SETTINGS` straight after.
 
 **The view arrives one level down**, as `{"view": {...}}`, and an action's
 answer does the same alongside `success`. Reading the outer object yields a
@@ -375,30 +388,76 @@ status of `None` and a table that looks empty rather than unreachable.
 | `START_GAME` | | |
 | `CANCEL_TABLE` | | |
 
-Two of these answer `200 {"success": true}` while doing nothing at all, which
-is the worst way for an API to disagree with you:
-
-* **`SET_READY` carries its value.** There is no `SET_UNREADY`. Sending the
-  bare type is accepted and the seat stays unready - found by readying up
-  through the API, watching the seat refuse to change, and then reading what
-  the site's own button sends.
-* **`UPDATE_SETTINGS` ignores config keys it does not know.** Six spellings of
-  a visibility flag were all accepted; only `visibility` landed.
+`SET_READY` carries its value - there is no `SET_UNREADY`, and sending the
+bare type is answered `200 {"success": true}` while the seat stays unready.
 
 ### Config
 
-`{gameFormat, maxSeats, openSeats, visibility, timerPreset, allowSpectators,
-revealHands, revealHandsToSpectators, afkPingEnabled, allowGuestInvites,
-privateUndoConfig{mode}}`
+Every value below was set against a live table and read back. The server names
+its refusals, under `code: "invalid_setting"`, so the accepted sets are
+enumerated rather than guessed.
 
-* `gameFormat` is `Core`, `Infinity`, `Coconut` or `NoLimit`. The table's
-  format decides which decks are legal in it: a three-ink Coconut deck is
-  refused at a Core table with *"Deck has too many colors"*.
-* **`maxSeats` and `openSeats` are different.** The first is capacity, the
-  second is how many are joinable. Raising only `maxSeats` leaves the table
-  showing as full.
-* Game mode is separate from format: *"Sealed, Pack Rush and Draft are 1v1
-  modes"*, so Constructed is the one that reaches four players.
+| key | accepted | note |
+|---|---|---|
+| `gameFormat` | `CoreConstructed`, `InfinityConstructed`, `Coconut` | bare `Core`/`Infinity`/`NoLimit` are refused as *"Invalid format"* |
+| `gameMode` | `constructed`, `sealed`, `pack_rush`, `draft` | **stored as `deckType`**; lowercase and snake_case only - `Sealed`, `PackRush` and `Draft` are all refused |
+| `matchFormat` | `bo1`, `bo3` | "Best of 1/3". `bo1` is the default and **clears the key** rather than storing it |
+| `privateUndoConfig` | `{mode: unlimited\|timed\|disabled}` | "Free Undo". `timed` fills in `undoTimeCostSeconds: 30` itself; sending the seconds alongside is *"Invalid undo settings"* |
+| `openSeats` | 2 to 4 | the only seat lever there is |
+| `maxSeats` | - | **ignored.** Every value from 1 to 8 answers 200 and none is stored; it stays 4 |
+| `visibility` | `public`, `private` | `unlisted`/`friends`/`invite` are refused |
+| `timerPreset` | `none`, `casual`, `standard`, `blitz` | |
+| `loreToWin` | at least 1 to 100 | barely validated - 1 is accepted, so a table can be a one-lore race |
+| `allowSpectators`, `revealHands`, `revealHandsToSpectators`, `afkPingEnabled`, `allowGuestInvites` | booleans | |
+
+Setting `gameMode` materialises keys of its own: `sealed` adds `deckType`
+and `sealedRules` `{minDeckSize: 40, maxInkColors, maxCopies}` and **clears
+`gameFormat`**; `pack_rush` adds `gameVariant: "pack_rush"` and `packRushSets`
+`[1..11]`.
+
+Keys outside the list - `isPublic`, `randomizeSeats`, `password`,
+`startingHandSize`, `spectatorChat`, `turnTimeSeconds`, `name`, `description` -
+are answered 200 and never stored.
+
+**The panel's labels are not the wire's values.** Table settings offers
+*"Core"*, which is refused; on the wire it is `CoreConstructed`. It also offers
+three things no spelling has reached: **No Limit** (`NoLimit`, `no_limit`,
+`Unlimited` all *"Invalid format"*), **Ink Drop for Second Player**, and
+**First player**. The last two are accepted-and-ignored under every name tried,
+so either they travel outside `config` or the panel is ahead of the API.
+
+**A bad value rejects the whole call.** `UPDATE_SETTINGS` is not a best-effort
+patch: one unknown `gameMode` in a config of twenty keys returns
+`400 {"error": "Invalid game mode"}` and applies none of them, which makes
+every other key in that batch look unsupported. Send settings one at a time
+when probing.
+
+* The table's format decides which decks are legal in it: a three-ink Coconut
+  deck is refused at a Core table with *"Deck has too many colors"*.
+* Sealed and Draft are 1v1 - `openSeats: 3` at one is refused with *"This game
+  mode is 1v1 only"* - so Constructed is what reaches three or four players.
+
+### The lobby socket
+
+```
+{"type": "table_init",   "view": {...}}     on connect, the complete view
+{"type": "table_update", "view": {...}}     on every change, also complete
+{"type": "pong"}                            answers {"type": "ping"}
+```
+
+**The token endpoint names no host.** A game's token carries a `wsUrl` because
+games are sharded across `ws`, `ws3`, `ws4`; a table's is a bare JWT and the
+host is the unsharded `wss://ws.<site>`. Code that required `wsUrl` could never
+open a lobby socket at all.
+
+**Actions do not travel on it.** `{"type": "action", ...}` is accepted and does
+nothing; every lobby action is a POST.
+
+**The socket is the seat's presence.** `connected` on a seat means "holds a
+socket", nothing more - measured on a live table, the seat read `false`, then
+`true` while a socket was held, then `false` again a second after dropping it.
+Without one, a seat that is named, decked and ready still looks abandoned to
+the host.
 
 ### Seats
 

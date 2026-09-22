@@ -124,8 +124,57 @@ class TestTables:
         router.json_on(
             "/api/table/create", {"tableId": "table-0001", "url": "https://duels.ink/t/t-1"}
         )
+        router.json_on("/api/table/table-0001/view", {"view": {"status": "assembling"}})
         text = await call_text(authed_mcp_client, "duels_create_table")
         assert "table-0001" in text and "https://duels.ink/t/t-1" in text
+
+    async def test_creation_settings_travel_at_the_top_level(
+        self, router, authed_mcp_client
+    ):
+        """A nested `config` object is accepted at creation and silently dropped."""
+        router.json_on("/api/table/create", {"tableId": "table-0001", "url": "u"})
+        router.json_on("/api/table/table-0001/view", {"view": {"status": "assembling"}})
+        await call_text(
+            authed_mcp_client,
+            "duels_create_table",
+            game_format="Coconut",
+            timer_preset="standard",
+            public=True,
+            lore_to_win=25,
+        )
+        body = next(
+            c for c in router.calls if c.url.path == "/api/table/create"
+        ).content
+        for expected in (b'"gameFormat":"Coconut"', b'"timerPreset":"standard"',
+                         b'"visibility":"public"', b'"loreToWin":25'):
+            assert expected in body
+        assert b'"config"' not in body
+
+    async def test_a_short_format_name_is_spelled_out(self, router, authed_mcp_client):
+        """'Core' on its own is refused by the API; CoreConstructed is the name."""
+        router.json_on("/api/table/create", {"tableId": "table-0001", "url": "u"})
+        router.json_on("/api/table/table-0001/view", {"view": {"status": "assembling"}})
+        await call_text(authed_mcp_client, "duels_create_table", game_format="Core")
+        body = next(c for c in router.calls if c.url.path == "/api/table/create").content
+        assert b'"gameFormat":"CoreConstructed"' in body
+
+    async def test_an_unknown_format_names_the_real_ones(self, authed_mcp_client):
+        text = await call_text(
+            authed_mcp_client, "duels_create_table", game_format="Pauper"
+        )
+        assert text.startswith("Error:")
+        assert "Coconut" in text and "CoreConstructed" in text
+
+    async def test_seats_are_opened_after_creation(self, router, authed_mcp_client):
+        """Creation ignores a seat count, so it has to be set as a settings action."""
+        router.json_on("/api/table/create", {"tableId": "table-0001", "url": "u"})
+        router.json_on("/api/table/table-0001/view", {"view": {"status": "assembling"}})
+        router.json_on("/api/table/table-0001/action", {"success": True})
+        await call_text(authed_mcp_client, "duels_create_table", seats=4)
+        body = next(
+            c for c in router.calls if c.url.path == "/api/table/table-0001/action"
+        ).content
+        assert b'"openSeats":4' in body
 
     async def test_an_unknown_action_lists_the_real_ones(self, authed_mcp_client):
         text = await call_text(

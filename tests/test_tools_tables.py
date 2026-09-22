@@ -235,9 +235,15 @@ class TestTableSettings:
         for fmt in ("Core", "Infinity", "Coconut"):
             assert fmt in text
 
-    async def test_opening_seats_raises_both_counts(self, router, authed_mcp_client):
-        """maxSeats is the capacity and openSeats is how many are joinable.
-        Raising only one leaves the table looking full."""
+    async def test_opening_seats_sets_only_the_one_that_works(
+        self, router, authed_mcp_client
+    ):
+        """`maxSeats` is fixed at 4.
+
+        Every value from 1 to 8 is answered 200 and none of them is stored, so
+        sending it alongside `openSeats` only made the call look like it did
+        more than it did. `openSeats` is the whole mechanism.
+        """
         routes(router)
         await call_text(
             authed_mcp_client,
@@ -247,7 +253,7 @@ class TestTableSettings:
             seats=4,
         )
         body = sent(router)
-        assert b"maxSeats" in body and b"openSeats" in body
+        assert b"openSeats" in body and b"maxSeats" not in body
 
     async def test_going_public_is_a_setting(self, router, authed_mcp_client):
         routes(router)
@@ -290,6 +296,98 @@ class TestTableSettings:
         )
         for action in ("set_format", "set_seats", "kick_seat", "make_public"):
             assert action in text
+
+
+class TestMatchFormatAndUndo:
+    """Two settings the panel offers that the wire spells its own way."""
+
+    async def test_best_of_three_is_bo3(self, router, authed_mcp_client):
+        routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="set_match_format",
+            match_format="bo3",
+        )
+        body = sent(router)
+        assert b"matchFormat" in body and b"bo3" in body
+
+    async def test_an_unset_match_format_reads_as_best_of_one(
+        self, router, authed_mcp_client
+    ):
+        """The server stores nothing for the default, so absent means bo1."""
+        routes(router)
+        payload = await call_json(
+            authed_mcp_client, "duels_get_table", table_id=TABLE_ID
+        )
+        assert payload["match_format"] == "bo1"
+
+    async def test_a_bad_match_format_lists_the_two(self, authed_mcp_client):
+        text = await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="set_match_format",
+            match_format="bo5",
+        )
+        assert text.startswith("Error:") and "bo1" in text and "bo3" in text
+
+    async def test_undo_sends_only_the_mode(self, router, authed_mcp_client):
+        """Sending the seconds alongside is refused as 'Invalid undo settings';
+        the server fills in undoTimeCostSeconds itself."""
+        routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="set_undo",
+            undo_mode="timed",
+        )
+        body = sent(router)
+        assert b"privateUndoConfig" in body and b"timed" in body
+        assert b"undoTimeCostSeconds" not in body and b"seconds" not in body
+
+    async def test_a_bad_undo_mode_lists_the_three(self, authed_mcp_client):
+        text = await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="set_undo",
+            undo_mode="sometimes",
+        )
+        assert text.startswith("Error:")
+        for mode in ("unlimited", "timed", "disabled"):
+            assert mode in text
+
+    async def test_the_undo_mode_is_read_back(self, router, authed_mcp_client):
+        table = view()
+        table["view"]["config"]["privateUndoConfig"] = {"mode": "disabled"}
+        routes(router, table=table)
+        payload = await call_json(
+            authed_mcp_client, "duels_get_table", table_id=TABLE_ID
+        )
+        assert payload["undo_mode"] == "disabled"
+
+    async def test_open_hand_to_spectators_is_read_back(self, router, authed_mcp_client):
+        table = view()
+        table["view"]["config"]["revealHandsToSpectators"] = True
+        routes(router, table=table)
+        payload = await call_json(
+            authed_mcp_client, "duels_get_table", table_id=TABLE_ID
+        )
+        assert payload["reveal_hands_to_spectators"] is True
+
+    async def test_no_limit_is_not_offered(self, authed_mcp_client):
+        """The panel lists it; every spelling of it is 'Invalid format'."""
+        text = await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="set_format",
+            game_format="NoLimit",
+        )
+        assert text.startswith("Error:")
 
 
 class TestLeavingAndAbandonment:

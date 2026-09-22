@@ -19,6 +19,7 @@ No network, no account, no games created. It finishes in under ten seconds.
 | `test_tools_decks.py` | Building, renaming, deleting and importing decks; draft, sealed and playground |
 | `test_tools_play.py` | Bot games, tables, and entering or leaving the matchmaking queue |
 | `test_tools_tables.py` | Lobbies: the view envelope, seats, ready, formats, finding and joining |
+| `test_tablews.py` | The lobby socket: connecting, resync, and holding the seat |
 | `test_tools_ingame.py` | The game log, waiting for a turn, conceding, and the odd prompt shapes |
 | `test_resources.py` | The `duels://` resources, which are addressed by URI rather than called |
 | `test_matchmaking.py` | Queue heartbeat, accepting a pairing inside its window, falling back when the stream drops |

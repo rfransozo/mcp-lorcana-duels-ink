@@ -17,6 +17,7 @@ from fastmcp import Context, FastMCP
 from .cards import CardCatalog
 from .client import DuelsClient, DuelsError
 from .gamews import GameRegistry
+from .tablews import TableRegistry
 from .matchmaking import Matchmaker
 
 load_dotenv()
@@ -80,17 +81,19 @@ class AppContext:
     client: DuelsClient
     catalog: CardCatalog
     games: GameRegistry
+    tables: TableRegistry
     matchmaker: Matchmaker
 
 
 @asynccontextmanager
 async def lifespan(_server: FastMCP):
-    """Create the shared HTTP client, card catalog and game registry."""
+    """Create the shared HTTP client, card catalog, and game and table registries."""
     client = DuelsClient(cookie=os.getenv("DUELS_SESSION_COOKIE"))
     ctx = AppContext(
         client=client,
         catalog=CardCatalog(client),
         games=GameRegistry(client),
+        tables=TableRegistry(client),
         matchmaker=Matchmaker(client),
     )
     log.info(
@@ -103,6 +106,7 @@ async def lifespan(_server: FastMCP):
     finally:
         await ctx.matchmaker.close()
         await ctx.games.close_all()
+        await ctx.tables.close_all()
         await client.aclose()
         log.info("duels_mcp stopped")
 

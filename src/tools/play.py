@@ -31,6 +31,41 @@ async def _deck_card_ids(app: AppContext, deck_id: str) -> list[str]:
     return list((await _deck(app, deck_id))["cardIds"])
 
 
+# Every value below was read off a live table by setting it and reading it
+# back. The server refuses a bad one by name - "Invalid format", "Invalid game
+# mode", "Invalid timer preset", all under code `invalid_setting` - so these
+# lists are enumerated rather than guessed.
+TABLE_FORMATS = ("CoreConstructed", "InfinityConstructed", "Coconut")
+# "Best of 3" in the panel. `bo1` is the default and clears the key.
+MATCH_FORMATS = ("bo1", "bo3")
+# "Free Undo" in the panel. `timed` materialises undoTimeCostSeconds: 30.
+UNDO_MODES = ("unlimited", "timed", "disabled")
+TABLE_MODES = ("constructed", "sealed", "draft")
+TIMER_PRESETS = ("none", "standard", "blitz", "casual")
+VISIBILITIES = ("public", "private")
+
+# Short spellings people actually say, mapped to what the API wants. "Core"
+# and "Infinity" on their own are refused.
+FORMAT_ALIASES = {
+    "core": "CoreConstructed",
+    "coreconstructed": "CoreConstructed",
+    "infinity": "InfinityConstructed",
+    "infinityconstructed": "InfinityConstructed",
+    "coconut": "Coconut",
+}
+
+
+def _format_name(value: str) -> str:
+    """Accept the name a player would say, send the one the API wants."""
+    key = "".join(c for c in value if c.isalnum()).lower()
+    if key not in FORMAT_ALIASES:
+        raise DuelsError(
+            f"game_format must be one of: {', '.join(TABLE_FORMATS)} "
+            f"(or the short forms Core, Infinity, Coconut). Got {value!r}."
+        )
+    return FORMAT_ALIASES[key]
+
+
 def _table_view(data: object) -> dict:
     """The table itself, out of whatever wrapper it arrived in.
 
@@ -74,10 +109,21 @@ def _table_payload(table_id: str, view: dict) -> dict:
         "status": view.get("status"),
         "game_id": view.get("gameId"),
         "format": config.get("gameFormat"),
+        # Sent as `gameMode`, stored as `deckType`. Sealed and Draft are 1v1.
+        "game_mode": config.get("deckType"),
         "max_seats": max_seats,
         "open_seats": config.get("openSeats") or max_seats,
         "visibility": config.get("visibility"),
         "timer_preset": config.get("timerPreset"),
+        "lore_to_win": config.get("loreToWin"),
+        # Absent means Best of 1: the server stores nothing for the default.
+        "match_format": config.get("matchFormat") or "bo1",
+        "undo_mode": (config.get("privateUndoConfig") or {}).get("mode"),
+        "allow_spectators": config.get("allowSpectators"),
+        "reveal_hands": config.get("revealHands"),
+        "reveal_hands_to_spectators": config.get("revealHandsToSpectators"),
+        "afk_ping": config.get("afkPingEnabled"),
+        "allow_guest_invites": config.get("allowGuestInvites"),
         "is_host": view.get("isHost"),
         "is_spectator": view.get("isSpectator"),
         "my_seat": view.get("mySeatIndex"),
@@ -103,8 +149,20 @@ def _table_md(p: dict) -> str:
     ]
     if p.get("visibility"):
         head.append(bullet("Visibility", p["visibility"]))
+    if p.get("game_mode") and p["game_mode"] != "constructed":
+        head.append(bullet("Mode", f"{p['game_mode']} (1v1 only)"))
     if p.get("timer_preset") and p["timer_preset"] != "none":
         head.append(bullet("Timer", p["timer_preset"]))
+    if p.get("match_format") and p["match_format"] != "bo1":
+        head.append(bullet("Match", "best of three"))
+    if p.get("undo_mode"):
+        head.append(bullet("Undo", p["undo_mode"]))
+    if p.get("reveal_hands"):
+        head.append(bullet("Open hand", "every hand is visible to everyone"))
+    if p.get("lore_to_win"):
+        head.append(bullet("Lore to win", p["lore_to_win"]))
+    if p.get("allow_spectators") is False:
+        head.append(bullet("Spectators", "not allowed"))
     if p.get("game_id"):
         head += [
             "",
@@ -343,46 +401,145 @@ async def duels_list_active_games(
 @tool_errors
 async def duels_create_table(
     ctx: Context,
+    game_format: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "'Coconut', 'Core' or 'Infinity'. The table's format decides which "
+                "decks are legal in it, and Coconut is table-only - there is no queue "
+                "and no bot for it. Defaults to Core."
+            ),
+            max_length=32,
+        ),
+    ] = None,
+    seats: Annotated[
+        Optional[int],
+        Field(
+            default=None,
+            description=(
+                "How many players can join, 2 to 4. More than 2 needs the default "
+                "Constructed mode - Sealed and Draft are 1v1."
+            ),
+            ge=2,
+            le=4,
+        ),
+    ] = None,
+    public: Annotated[
+        Optional[bool],
+        Field(
+            default=None,
+            description=(
+                "True lists the table in the public lobby so strangers can find it. "
+                "False (the default) makes it reachable by invite link only."
+            ),
+        ),
+    ] = None,
+    timer_preset: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description="'none' (default), 'casual', 'standard' or 'blitz'.",
+            max_length=16,
+        ),
+    ] = None,
+    lore_to_win: Annotated[
+        Optional[int],
+        Field(
+            default=None,
+            description=(
+                "Override the lore goal, 1 to 99. Leave unset for the format's own: "
+                "20 normally, 25 in Coconut."
+            ),
+            ge=1,
+            le=99,
+        ),
+    ] = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Creates a private table and returns its id and shareable invite link.
 
     A table seats 2-4 players, can include bot seats, and anyone with the link
     can join - no account needed on their side. Creating one requires you to be
-    signed in.
+    signed in. It is also the only way into Coconut and the only way into a
+    game with more than one opponent.
 
-    After creating, set your deck and ready up with duels_configure_table, then
-    start it. The table is just a lobby; the game itself begins when it starts.
+    Settings can be given here or changed later with duels_configure_table.
+    After creating, set your deck and ready up, then start it. The table is
+    just a lobby; the game itself begins when it starts.
 
     Do NOT use this for a quick solo practice game (duels_start_bot_game is one
     call) or for ranked play (duels_join_matchmaking).
 
     Examples:
-    - "Make a table to play with a friend" -> call with defaults, then share the url
+    - "Make a table to play with a friend" -> call with defaults, share the url
+    - "Open a 4-player Coconut table anyone can join" ->
+      game_format='Coconut', seats=4, public=True
+    - "A timed 1v1" -> timer_preset='standard'
 
     Args:
         ctx (Context): Injected by FastMCP.
+        game_format (Optional[str]): Coconut, Core or Infinity.
+        seats (Optional[int]): 2 to 4.
+        public (Optional[bool]): List it in the public lobby.
+        timer_preset (Optional[str]): none | casual | standard | blitz.
+        lore_to_win (Optional[int]): 1 to 99.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
-        str: {"table_id": str, "url": str, "view": {...}} - share `url` to
-        invite someone.
+        str: {"table_id": str, "url": str, ...} plus the lobby state as
+        duels_get_table returns it. Share `url` to invite someone.
+
+    Error Handling:
+        Names the accepted values when a format or timer preset is not one of
+        them, rather than letting Duels.ink answer 400.
     """
     app = app_ctx(ctx)
     app.client.require_auth("Creating a table")
-    data = await app.client.post("/api/table/create", {"applyDefaultPreset": True})
-    payload = {
-        "table_id": data.get("tableId"),
-        "url": data.get("url"),
-        "view": data.get("view"),
-    }
+
+    # Creation takes its settings at the top level. A nested `config` object is
+    # accepted and silently dropped, which is the worst of both worlds.
+    body: dict[str, Any] = {"applyDefaultPreset": True}
+    if game_format:
+        body["gameFormat"] = _format_name(game_format)
+    if timer_preset:
+        preset = timer_preset.strip().lower()
+        if preset not in TIMER_PRESETS:
+            raise DuelsError(
+                f"timer_preset must be one of: {', '.join(TIMER_PRESETS)}. "
+                f"Got {timer_preset!r}."
+            )
+        body["timerPreset"] = preset
+    if public is not None:
+        body["visibility"] = "public" if public else "private"
+    if lore_to_win is not None:
+        body["loreToWin"] = lore_to_win
+
+    data = await app.client.post("/api/table/create", body)
+    table_id = data.get("tableId")
+
+    # `maxSeats` is fixed at 4 and ignored wherever it is sent; `openSeats` is
+    # the only thing that decides how many people can actually join, and it is
+    # not honoured at creation either.
+    if seats is not None and table_id:
+        await app.client.post(
+            f"/api/table/{table_id}/action",
+            {"action": {"type": "UPDATE_SETTINGS", "config": {"openSeats": seats}}},
+        )
+
+    view = await app.tables.attend(table_id) if table_id else None
+    if view is None:
+        view = _table_view(data.get("view")) or _table_view(
+            await app.client.get(f"/api/table/{table_id}/view")
+        )
+    payload = {**_table_payload(table_id, view), "url": data.get("url")}
 
     def md(p: dict) -> str:
         return join_lines(
             [
-                f"# Table created: `{p['table_id']}`",
-                "",
                 bullet("Invite link", p["url"]),
+                "",
+                _table_md(p),
                 "",
                 "Next: `duels_configure_table` to pick a deck and ready up, then start it.",
             ]
@@ -437,7 +594,7 @@ async def duels_configure_table(
         Field(
             default=None,
             description=(
-                "For action='set_format': 'Core', 'Infinity', 'Coconut' or 'NoLimit'. "
+                "For action='set_format': 'Core', 'Infinity' or 'Coconut'. "
                 "The table's format decides which decks are legal in it - a three-ink "
                 "Coconut deck is refused at a Core table."
             ),
@@ -448,9 +605,65 @@ async def duels_configure_table(
         Optional[int],
         Field(
             default=None,
-            description="For action='set_seats': how many players the table holds, 2 to 4.",
+            description=(
+                "For action='set_seats': how many players can join, 2 to 4. More "
+                "than 2 needs Constructed mode - Sealed and Draft are 1v1."
+            ),
             ge=2,
             le=4,
+        ),
+    ] = None,
+    timer_preset: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='set_timer': 'none', 'casual', 'standard' or 'blitz'. "
+                "A timed game eliminates a player who runs their clock to zero."
+            ),
+            max_length=16,
+        ),
+    ] = None,
+    lore_to_win: Annotated[
+        Optional[int],
+        Field(
+            default=None,
+            description="For action='set_lore_goal': the lore target, 1 to 99.",
+            ge=1,
+            le=99,
+        ),
+    ] = None,
+    game_mode: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='set_mode': 'constructed' (the default, and the only "
+                "one that reaches 3-4 players), 'sealed' or 'draft'."
+            ),
+            max_length=16,
+        ),
+    ] = None,
+    match_format: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='set_match_format': 'bo1' (single game, the default) "
+                "or 'bo3' (best of three)."
+            ),
+            max_length=8,
+        ),
+    ] = None,
+    undo_mode: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='set_undo': 'unlimited' (free undo for everyone), "
+                "'timed' (each undo costs 30 seconds of your clock) or 'disabled'."
+            ),
+            max_length=16,
         ),
     ] = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
@@ -474,9 +687,18 @@ async def duels_configure_table(
         ctx (Context): Injected by FastMCP.
         table_id (str): Table UUID from duels_create_table.
         action (str): set_deck | ready | unready | add_bot | kick_seat |
-            set_format | set_seats | make_public | make_private | leave |
+            set_format | set_mode | set_seats | set_timer | set_lore_goal |
+            set_match_format | set_undo | make_public | make_private | leave |
             start | cancel.
         deck_id (Optional[str]): Required when action='set_deck'.
+        seat_index (Optional[int]): Required when action='kick_seat'.
+        game_format (Optional[str]): Required when action='set_format'.
+        seats (Optional[int]): Required when action='set_seats'.
+        timer_preset (Optional[str]): Required when action='set_timer'.
+        lore_to_win (Optional[int]): Required when action='set_lore_goal'.
+        game_mode (Optional[str]): Required when action='set_mode'.
+        match_format (Optional[str]): Required when action='set_match_format'.
+        undo_mode (Optional[str]): Required when action='set_undo'.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
@@ -498,7 +720,12 @@ async def duels_configure_table(
         "leave": "LEAVE_TABLE",
         "kick_seat": "KICK_SEAT",
         "set_format": "UPDATE_SETTINGS",
+        "set_mode": "UPDATE_SETTINGS",
         "set_seats": "UPDATE_SETTINGS",
+        "set_timer": "UPDATE_SETTINGS",
+        "set_lore_goal": "UPDATE_SETTINGS",
+        "set_match_format": "UPDATE_SETTINGS",
+        "set_undo": "UPDATE_SETTINGS",
         "make_public": "UPDATE_SETTINGS",
         "make_private": "UPDATE_SETTINGS",
         "start": "START_GAME",
@@ -534,21 +761,68 @@ async def duels_configure_table(
     elif key == "set_format":
         if not game_format:
             raise DuelsError(
-                "action='set_format' needs game_format: Core, Infinity, Coconut or NoLimit."
+                "action='set_format' needs game_format: Core, Infinity or Coconut."
             )
-        body["config"] = {"gameFormat": game_format}
+        body["config"] = {"gameFormat": _format_name(game_format)}
+    elif key == "set_mode":
+        mode = (game_mode or "").strip().lower()
+        if mode not in TABLE_MODES:
+            raise DuelsError(
+                f"action='set_mode' needs game_mode, one of: {', '.join(TABLE_MODES)}. "
+                "Sealed and Draft are 1v1; only Constructed reaches 3-4 players."
+            )
+        body["config"] = {"gameMode": mode}
     elif key == "set_seats":
         if seats is None:
             raise DuelsError("action='set_seats' needs seats (2 to 4).")
-        # maxSeats is the capacity and openSeats is how many are actually
-        # joinable; raising only one leaves the table looking full.
-        body["config"] = {"maxSeats": seats, "openSeats": seats}
+        # `maxSeats` is fixed at 4: every value from 1 to 8 is answered 200 and
+        # none of them is stored. `openSeats` is the only lever that exists,
+        # and asking for more than 2 at a Sealed or Draft table is refused with
+        # "This game mode is 1v1 only".
+        body["config"] = {"openSeats": seats}
+    elif key == "set_timer":
+        preset = (timer_preset or "").strip().lower()
+        if preset not in TIMER_PRESETS:
+            raise DuelsError(
+                f"action='set_timer' needs timer_preset, one of: "
+                f"{', '.join(TIMER_PRESETS)}."
+            )
+        body["config"] = {"timerPreset": preset}
+    elif key == "set_lore_goal":
+        if lore_to_win is None:
+            raise DuelsError("action='set_lore_goal' needs lore_to_win (1 to 99).")
+        body["config"] = {"loreToWin": lore_to_win}
+    elif key == "set_match_format":
+        fmt = (match_format or "").strip().lower()
+        if fmt not in MATCH_FORMATS:
+            raise DuelsError(
+                f"action='set_match_format' needs match_format, one of: "
+                f"{', '.join(MATCH_FORMATS)}."
+            )
+        body["config"] = {"matchFormat": fmt}
+    elif key == "set_undo":
+        mode = (undo_mode or "").strip().lower()
+        if mode not in UNDO_MODES:
+            raise DuelsError(
+                f"action='set_undo' needs undo_mode, one of: {', '.join(UNDO_MODES)}."
+            )
+        # The seconds are the server's to fill in: sending them alongside is
+        # refused as "Invalid undo settings".
+        body["config"] = {"privateUndoConfig": {"mode": mode}}
     elif key in ("make_public", "make_private"):
         body["config"] = {
             "visibility": "public" if key == "make_public" else "private"
         }
 
     result = await app.client.post(f"/api/table/{table_id}/action", {"action": body})
+
+    # Once we are out of the lobby there is nothing to be present at, and a
+    # socket left open on a cancelled table just fails on its next ping.
+    if key in ("leave", "cancel", "start"):
+        await app.tables.drop(table_id)
+    else:
+        await app.tables.attend(table_id)
+
     view = _table_view(result) or _table_view(
         await app.client.get(f"/api/table/{table_id}/view")
     )
@@ -838,7 +1112,11 @@ async def duels_get_table(
         "spectators"}.
     """
     app = app_ctx(ctx)
-    view = _table_view(await app.client.get(f"/api/table/{table_id}/view"))
+    # Reading a table also sits in it: `connected` on a seat means "holds a
+    # socket", so without one our own chair reads as empty to everybody else.
+    view = await app.tables.attend(table_id)
+    if view is None:
+        view = _table_view(await app.client.get(f"/api/table/{table_id}/view"))
     return render(_table_payload(table_id, view), response_format, _table_md)
 
 
@@ -906,8 +1184,13 @@ async def duels_list_open_tables(
         filled = row.get("seatsFilled") or 0
         cap = row.get("maxSeats") or 0
         fmt = row.get("format")
-        if game_format and str(fmt or "").lower() != game_format.strip().lower():
-            continue
+        # The lobby reports "CoreConstructed" where a person says "Core", so
+        # an exact match would silently return nothing for the commonest word.
+        if game_format:
+            wanted = "".join(c for c in game_format if c.isalnum()).lower()
+            wanted = FORMAT_ALIASES.get(wanted, game_format.strip())
+            if str(fmt or "").lower() != wanted.lower():
+                continue
         if with_space and cap and filled >= cap:
             continue
         tables.append(
@@ -1025,6 +1308,7 @@ async def duels_join_table(
             seat["coconutCardId"] = deck["coconutCardId"]
         result = await app.client.post(f"/api/table/{table_id}/action", {"action": seat})
 
+    await app.tables.attend(table_id)
     view = _table_view(result) or _table_view(
         await app.client.get(f"/api/table/{table_id}/view")
     )

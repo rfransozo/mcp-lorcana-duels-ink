@@ -153,10 +153,24 @@ class TestWsToken:
         with pytest.raises(DuelsError, match="game.*table"):
             await client.ws_token("lobby", "x")
 
-    async def test_incomplete_response_is_rejected(self, router, client):
-        router.json_on("/api/game/g1/ws-token", {"token": "t"})
+    async def test_a_response_without_a_token_is_rejected(self, router, client):
+        router.json_on("/api/game/g1/ws-token", {"wsUrl": "wss://ws.duels.ink"})
         with pytest.raises(DuelsError, match="usable WebSocket token"):
             await client.ws_token("game", "g1")
+
+    async def test_a_token_without_a_host_falls_back_to_the_default(self, router, client):
+        """Tables answer with a bare token; games name their shard.
+
+        Insisting on `wsUrl` meant a lobby socket could never be opened, which
+        is why our own seat read as disconnected to everyone at the table.
+        """
+        router.json_on("/api/table/t1/ws-token", {"token": "t"})
+        url = await client.ws_token("table", "t1")
+        assert url == "wss://ws.duels.ink/table/t1?token=t"
+
+    async def test_a_named_host_still_wins(self, router, client):
+        router.json_on("/api/game/g1/ws-token", {"token": "t", "wsUrl": "wss://ws4.duels.ink"})
+        assert await client.ws_token("game", "g1") == "wss://ws4.duels.ink/game/g1?token=t"
 
 
 class TestVerbs:

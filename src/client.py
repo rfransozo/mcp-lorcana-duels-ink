@@ -309,11 +309,23 @@ class DuelsClient:
         data = await self.get(f"/api/{kind}/{resource_id}/ws-token", params=params)
         token = data.get("token") if isinstance(data, dict) else None
         base = (data.get("wsUrl") or "").rstrip("/") if isinstance(data, dict) else ""
-        if not token or not base:
+        if not base:
+            # Games are sharded and name their host; tables are not and do not,
+            # so their token comes back alone. Requiring wsUrl meant a lobby
+            # socket could never be opened at all, which is why our own seat
+            # read as disconnected to everyone else at the table.
+            base = self._default_ws_base()
+        if not token:
             raise DuelsError(
                 f"Duels.ink did not return a usable WebSocket token for {kind} {resource_id}."
             )
         return f"{base}/{kind}/{resource_id}?token={token}"
+
+    def _default_ws_base(self) -> str:
+        """The unsharded socket host, derived from the API host."""
+        host = self.base_url
+        scheme, _, rest = host.partition("://")
+        return f"{'wss' if scheme == 'https' else 'ws'}://ws.{rest}"
 
     async def aclose(self) -> None:
         await self._client.aclose()
