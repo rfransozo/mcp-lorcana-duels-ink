@@ -20,7 +20,7 @@ pytestmark = pytest.mark.live
 
 # The build the protocol notes were written against. A mismatch is not a
 # failure - it is a prompt to re-check docs/PROTOCOL.md.
-DOCUMENTED_BUILD_ID = "caee107"
+DOCUMENTED_BUILD_ID = "0df7355"
 
 
 @pytest.fixture

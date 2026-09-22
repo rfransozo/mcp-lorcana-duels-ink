@@ -4,7 +4,10 @@ Everything here was observed on the wire against the live site. Duels.ink
 publishes no API documentation, so this file is the reference for maintaining
 the server when something breaks.
 
-Build id observed while mapping this: `caee107` (`GET /api/version`).
+Build id observed while mapping this: `0df7355` (`GET /api/version`).
+Re-verified against the live site on 2026-09-22: table config keys and
+their enums, the lobby socket, the victory and undo actions, and
+`START_TABLE`.
 
 ## Authentication
 

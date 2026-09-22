@@ -253,7 +253,7 @@ async def duels_start_bot_game(
     The game opens at the coin toss. Follow with duels_get_game_state and play
     the moves it lists.
 
-    Do NOT use this for ranked play (duels_join_matchmaking) or to play a
+    Do NOT use this for ranked play (duels_matchmaking action='join') or to play a
     friend (duels_create_table).
 
     Examples:
@@ -469,7 +469,7 @@ async def duels_create_table(
     just a lobby; the game itself begins when it starts.
 
     Do NOT use this for a quick solo practice game (duels_start_bot_game is one
-    call) or for ranked play (duels_join_matchmaking).
+    call) or for ranked play (duels_matchmaking action='join').
 
     Examples:
     - "Make a table to play with a friend" -> call with defaults, share the url
@@ -842,9 +842,9 @@ async def duels_configure_table(
 # Ranked matchmaking
 # =================================================================
 @mcp.tool(
-    name="duels_join_matchmaking",
+    name="duels_matchmaking",
     annotations={
-        "title": "Join a Ranked Queue",
+        "title": "Ranked Queue: Join, Wait, Leave",
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": False,
@@ -852,221 +852,164 @@ async def duels_configure_table(
     },
 )
 @tool_errors
-async def duels_join_matchmaking(
+async def duels_matchmaking(
     ctx: Context,
-    queue_id: Annotated[
+    action: Annotated[
         str,
         Field(
+            default="wait",
             description=(
-                "Which queue to join, e.g. 'quick-play', 'core-bo1', 'core-bo3', "
+                "'join' enters a queue (needs queue_id and deck_id); 'wait' "
+                "blocks until an opponent is found; 'leave' stops searching."
+            ),
+            max_length=8,
+        ),
+    ] = "wait",
+    queue_id: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='join': 'quick-play', 'core-bo1', 'core-bo3', "
                 "'infinity-bo1', 'infinity-bo3', 'special-ja-bo1'."
             ),
-            min_length=2,
             max_length=48,
         ),
-    ],
-    deck_id: DeckId,
+    ] = None,
+    deck_id: Annotated[
+        Optional[str],
+        Field(default=None, description="For action='join': the deck to queue with."),
+    ] = None,
     competitive_only: Annotated[
         bool,
-        Field(default=False, description="Restrict to the competitive matchmaking pool."),
+        Field(default=False, description="Restrict to the competitive pool."),
     ] = False,
+    timeout_seconds: Annotated[
+        int,
+        Field(
+            default=120,
+            description="For action='wait': how long to block before giving up.",
+            ge=5,
+            le=600,
+        ),
+    ] = 120,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
-    """Joins a ranked matchmaking queue and returns your queue position and estimated wait.
+    """Runs the ranked queue end to end: join it, wait in it, or stop searching.
 
-    Requires a signed-in account, and you cannot queue while another game is
-    active - finish or concede it first. Joining does not block: call this,
-    then poll duels_list_active_games (or call this tool again) until a match
-    is found, and play it with the in-game tools.
+    One tool because it is one piece of state. Joining does not find anybody by
+    itself - the queue entry only survives while a heartbeat runs, and that
+    heartbeat runs while you wait. So the sequence is join, then wait, and
+    waiting again after a timeout is normal.
 
-    Note that this pairs you against **real people**. Decide deliberately
-    before letting an agent play unattended in ranked queues.
+    Note that this pairs you with **real people**. Decide deliberately before
+    letting an agent play unattended, and once a match returns, play promptly.
 
-    Do NOT use for practice (duels_start_bot_game) or for a private game with a
-    friend (duels_create_table).
+    Do NOT re-join to poll: that re-enters the queue, sends you to the back,
+    and can undo a pairing already in progress. Use action='wait'. And do NOT
+    use action='leave' on a game that has already started - the only way out of
+    one is duels_concede, which counts as a loss.
 
     Examples:
-    - "Queue for ranked with my best deck" -> queue_id='core-bo1', deck_id=...
-    - "Play a quick unranked game" -> queue_id='quick-play', deck_id=...
+    - "Queue for ranked" -> action='join', queue_id='core-bo1', deck_id=...
+    - "Wait for my opponent" -> action='wait'
+    - "Keep waiting, it is slow" -> action='wait', timeout_seconds=300
+    - "Stop searching" -> action='leave'
 
     Args:
         ctx (Context): Injected by FastMCP.
-        queue_id (str): The queue to join.
-        deck_id (str): The deck to queue with.
+        action (str): join | wait | leave.
+        queue_id (Optional[str]): Required when action='join'.
+        deck_id (Optional[str]): Required when action='join'.
         competitive_only (bool): Competitive pool only. Default False.
+        timeout_seconds (int): 5-600, default 120. Used by action='wait'.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
-        str: {"status": str, "position": int, "estimatedWait": int,
-        "queueStartTime": ..., "gameId": str | null} - gameId appears once a
-        match has been made.
+        str: join -> {"status", "position", "estimatedWait", "gameId"};
+        wait -> {"game_id", "beats"} or {"timed_out", "queue_id", "beats"};
+        leave -> {"success": bool}.
 
     Error Handling:
-        Returns "Finish your active game before joining the queue" when a game
-        is already in progress.
+        Says plainly when you ask to wait without being queued, and returns
+        "Finish your active game before joining the queue" when one is running.
     """
     app = app_ctx(ctx)
+    wanted = (action or "wait").strip().lower()
+    if wanted not in ("join", "wait", "leave"):
+        raise DuelsError(f"action must be join, wait or leave. Got {action!r}.")
     app.client.require_auth("Ranked matchmaking")
 
-    body = {
-        "queueId": queue_id,
-        "deckId": deck_id,
-        "deckCardIds": await _deck_card_ids(app, deck_id),
-        "competitiveOnly": competitive_only,
-    }
-    data = await app.client.post("/api/matchmaking/join", body)
+    if wanted == "leave":
+        app.matchmaker.stop()
+        data = await app.client.post("/api/matchmaking/leave", {})
+        return render(
+            data if isinstance(data, dict) else {"result": data},
+            response_format,
+            lambda p: "Left the matchmaking queue." if p.get("success", True) else str(p),
+        )
+
+    if wanted == "wait":
+        if not app.matchmaker.queued:
+            raise DuelsError(
+                "You are not in a queue, so there is nothing to wait for. Join "
+                "one with action='join' first."
+            )
+        result = await app.matchmaker.wait_for_match(timeout_seconds)
+
+        def waited(p: dict) -> str:
+            if p.get("game_id"):
+                return join_lines([
+                    f"**Match found.** Game `{p['game_id']}`",
+                    "",
+                    "There is a real person waiting - play with duels_get_game_state.",
+                ])
+            return join_lines([
+                f"Still queued in {p.get('queue_id')} after {timeout_seconds}s "
+                f"({p.get('beats')} heartbeats sent).",
+                "",
+                "That is not an error. Call this again to keep waiting.",
+            ])
+
+        return render(result, response_format, waited)
+
+    if not queue_id or not deck_id:
+        raise DuelsError(
+            "action='join' needs queue_id and deck_id. Queues: quick-play, "
+            "core-bo1, core-bo3, infinity-bo1, infinity-bo3, special-ja-bo1."
+        )
+
+    data = await app.client.post(
+        "/api/matchmaking/join",
+        {
+            "queueId": queue_id,
+            "deckId": deck_id,
+            "deckCardIds": await _deck_card_ids(app, deck_id),
+            "competitiveOnly": competitive_only,
+        },
+    )
 
     # Joining alone never matches anyone: the entry has to be kept alive with a
     # heartbeat, which the site sends about once a second for as long as it is
     # queued. See src/matchmaking.py for how that was found.
     app.matchmaker.start(queue_id, deck_id)
 
-    def md(p: dict) -> str:
+    def joined(p: dict) -> str:
         if p.get("gameId"):
             return f"**Match found.** Game `{p['gameId']}` - continue with duels_get_game_state."
-        return join_lines(
-            [
-                f"# Queued in {queue_id}",
-                "",
-                bullet("Status", p.get("status")),
-                bullet("Position", p.get("position")),
-                bullet("Estimated wait", p.get("estimatedWait")),
-                "",
-                "Staying in the queue now - a heartbeat is running.",
-                "Call `duels_await_match` to block until an opponent is found.",
-                "Do NOT call this tool again to poll: it re-enters the queue and",
-                "sends you to the back.",
-            ]
-        )
+        return join_lines([
+            f"# Queued in {queue_id}",
+            "",
+            bullet("Status", p.get("status")),
+            bullet("Position", p.get("position")),
+            bullet("Estimated wait", p.get("estimatedWait")),
+            "",
+            "Staying in the queue now - a heartbeat is running.",
+            "Call this again with action='wait' to block until an opponent is found.",
+            "Do NOT re-join to poll: it sends you to the back of the queue.",
+        ])
 
-    return render(data if isinstance(data, dict) else {"result": data}, response_format, md)
-
-
-@mcp.tool(
-    name="duels_await_match",
-    annotations={
-        "title": "Wait for an Opponent",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    },
-)
-@tool_errors
-async def duels_await_match(
-    ctx: Context,
-    timeout_seconds: Annotated[
-        int,
-        Field(default=120, description="How long to block before giving up.", ge=5, le=600),
-    ] = 120,
-    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
-) -> str:
-    """Blocks until duels_join_matchmaking finds you an opponent, then returns the game.
-
-    Call this straight after joining a queue and leave it blocking. It keeps
-    the heartbeat running that the queue entry depends on, so waiting here is
-    what makes a match happen at all.
-
-    Timing out is not an error - the queue is still live and you can call this
-    again to keep waiting. Real people are on the other side, so once it
-    returns, play promptly.
-
-    Do NOT poll by calling duels_join_matchmaking repeatedly: that re-enters
-    the queue, sends you to the back, and can undo a pairing in progress.
-
-    Examples:
-    - "Wait for my opponent" -> call after duels_join_matchmaking
-    - "Keep waiting, the queue is slow" -> call again, timeout_seconds=300
-
-    Args:
-        ctx (Context): Injected by FastMCP.
-        timeout_seconds (int): 5-600, default 120.
-        response_format (ResponseFormat): 'markdown' (default) or 'json'.
-
-    Returns:
-        str: {"game_id": str, "beats": int} on a match, or
-             {"timed_out": True, "queue_id": str, "beats": int} while waiting.
-
-    Error Handling:
-        Says plainly when you are not queued, rather than blocking for nothing.
-    """
-    app = app_ctx(ctx)
-    app.client.require_auth("Matchmaking")
-
-    if not app.matchmaker.queued:
-        raise DuelsError(
-            "You are not in a queue, so there is nothing to wait for. Join one "
-            "with duels_join_matchmaking first."
-        )
-
-    result = await app.matchmaker.wait_for_match(timeout_seconds)
-
-    def md(p: dict) -> str:
-        if p.get("game_id"):
-            return join_lines(
-                [
-                    f"**Match found.** Game `{p['game_id']}`",
-                    "",
-                    "There is a real person waiting - play with duels_get_game_state.",
-                ]
-            )
-        return join_lines(
-            [
-                f"Still queued in {p.get('queue_id')} after {timeout_seconds}s "
-                f"({p.get('beats')} heartbeats sent).",
-                "",
-                "That is not an error. Call this again to keep waiting.",
-            ]
-        )
-
-    return render(result, response_format, md)
-
-
-@mcp.tool(
-    name="duels_leave_matchmaking",
-    annotations={
-        "title": "Leave the Ranked Queue",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    },
-)
-@tool_errors
-async def duels_leave_matchmaking(
-    ctx: Context,
-    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
-) -> str:
-    """Leaves the ranked matchmaking queue you are currently waiting in.
-
-    Safe to call when you are not queued - it simply reports that. Use it to
-    stop searching without starting a game, for example when the wait is long
-    or the person changes their mind.
-
-    Do NOT use it to leave a game that has already started - once matched, the
-    only way out is duels_concede, which counts as a loss. Leaving the queue
-    has no such penalty.
-
-    Examples:
-    - "Stop searching" -> call with defaults
-
-    Args:
-        ctx (Context): Injected by FastMCP.
-        response_format (ResponseFormat): 'markdown' (default) or 'json'.
-
-    Returns:
-        str: Whatever Duels.ink reports about leaving, typically
-        {"success": bool}.
-    """
-    app = app_ctx(ctx)
-    app.client.require_auth("Leaving the queue")
-    app.matchmaker.stop()
-    data = await app.client.post("/api/matchmaking/leave", {})
-    return render(
-        data if isinstance(data, dict) else {"result": data},
-        response_format,
-        lambda p: "Left the matchmaking queue.",
-    )
+    return render(data if isinstance(data, dict) else {"result": data}, response_format, joined)
 
 
 @mcp.tool(

@@ -131,7 +131,7 @@ async def duels_list_my_decks(
 
     Examples:
     - "Which decks do I have?" -> call with defaults
-    - "Pick a deck for ranked" -> take an id from here into duels_join_matchmaking
+    - "Pick a deck for ranked" -> take an id from here into duels_matchmaking action='join'
 
     Args:
         ctx (Context): Injected by FastMCP.

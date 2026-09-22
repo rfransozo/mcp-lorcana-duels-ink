@@ -1,7 +1,7 @@
 # MCP Lorcana — Duels.ink
 
 Play and manage **Disney Lorcana** on [Duels.ink](https://duels.ink) from an AI
-assistant. 50 tools covering matches, decks, the card catalog, statistics,
+assistant. 48 tools covering matches, decks, the card catalog, statistics,
 replays and the social side of the site.
 
 > Unofficial. Not affiliated with, endorsed by, or connected to Duels.ink,
@@ -114,14 +114,13 @@ legal in the Coconut format. The pool is at https://duels.ink/cards/coconut.
 
 **Matches** — `duels_start_bot_game`, `duels_create_table`, `duels_get_table`,
 `duels_list_open_tables`, `duels_join_table`,
-`duels_configure_table`, `duels_join_matchmaking`, `duels_await_match`,
-`duels_leave_matchmaking`, `duels_list_active_games`
+`duels_configure_table`, `duels_matchmaking`, `duels_list_active_games`
 
 Joining a queue is not enough to be paired: the entry has to be kept alive with
 a heartbeat, and a pairing has to be accepted within about fifteen seconds.
-`duels_join_matchmaking` starts both; `duels_await_match` then blocks until an
-opponent is found. Do not re-join to poll - that sends you to the back of the
-queue.
+That is why the queue is one tool and not three - `duels_matchmaking` with
+action='join' starts both, then action='wait' blocks until an opponent is
+found. Do not re-join to poll; that sends you to the back of the queue.
 
 **In game** — `duels_get_game_state`, `duels_get_legal_moves`,
 `duels_get_deck_tracker`, `duels_get_game_log`, `duels_wait_for_my_turn`,

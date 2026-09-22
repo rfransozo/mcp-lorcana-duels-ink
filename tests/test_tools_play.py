@@ -227,7 +227,11 @@ class TestMatchmaking:
 
     async def test_joining_needs_a_cookie(self, mcp_client):
         text = await call_text(
-            mcp_client, "duels_join_matchmaking", queue_id="quick-play", deck_id=DECK_ID
+            mcp_client,
+            "duels_matchmaking",
+            action="join",
+            queue_id="quick-play",
+            deck_id=DECK_ID,
         )
         assert text.startswith("Error:")
 
@@ -239,12 +243,13 @@ class TestMatchmaking:
         )
         text = await call_text(
             authed_mcp_client,
-            "duels_join_matchmaking",
+            "duels_matchmaking",
+            action="join",
             queue_id="quick-play",
             deck_id=DECK_ID,
         )
         assert "heartbeat is running" in text
-        assert "Do NOT call this tool again to poll" in text
+        assert "Do NOT re-join to poll" in text
 
     async def test_a_queue_that_matches_instantly_reports_the_game(
         self, router, authed_mcp_client
@@ -252,7 +257,8 @@ class TestMatchmaking:
         router.json_on("/api/matchmaking/join", {"gameId": games.GAME_ID})
         text = await call_text(
             authed_mcp_client,
-            "duels_join_matchmaking",
+            "duels_matchmaking",
+            action="join",
             queue_id="quick-play",
             deck_id=DECK_ID,
         )
@@ -261,7 +267,9 @@ class TestMatchmaking:
     async def test_waiting_without_queueing_says_so_instead_of_blocking(
         self, authed_mcp_client
     ):
-        text = await call_text(authed_mcp_client, "duels_await_match", timeout_seconds=5)
+        text = await call_text(
+            authed_mcp_client, "duels_matchmaking", action="wait", timeout_seconds=5
+        )
         assert text.startswith("Error:") and "not in a queue" in text
 
     async def test_a_timeout_is_reported_as_still_queued_not_as_failure(
@@ -275,11 +283,14 @@ class TestMatchmaking:
         router.json_on("/api/matchmaking/heartbeat", {"ok": True})
         await call_text(
             authed_mcp_client,
-            "duels_join_matchmaking",
+            "duels_matchmaking",
+            action="join",
             queue_id="quick-play",
             deck_id=DECK_ID,
         )
-        text = await call_text(authed_mcp_client, "duels_await_match", timeout_seconds=5)
+        text = await call_text(
+            authed_mcp_client, "duels_matchmaking", action="wait", timeout_seconds=5
+        )
         assert not text.startswith("Error:")
         assert "Still queued" in text and "not an error" in text
 
@@ -294,17 +305,20 @@ class TestMatchmaking:
         router.json_on("/api/matchmaking/leave", {"success": True})
         await call_text(
             authed_mcp_client,
-            "duels_join_matchmaking",
+            "duels_matchmaking",
+            action="join",
             queue_id="quick-play",
             deck_id=DECK_ID,
         )
-        text = await call_text(authed_mcp_client, "duels_leave_matchmaking")
+        text = await call_text(authed_mcp_client, "duels_matchmaking", action="leave")
         assert "Left the matchmaking queue" in text
         after = len(router.calls)
-        text = await call_text(authed_mcp_client, "duels_await_match", timeout_seconds=5)
+        text = await call_text(
+            authed_mcp_client, "duels_matchmaking", action="wait", timeout_seconds=5
+        )
         assert "not in a queue" in text
         assert len(router.calls) == after, "no further beats after leaving"
 
     async def test_leaving_needs_a_cookie(self, mcp_client):
-        text = await call_text(mcp_client, "duels_leave_matchmaking")
+        text = await call_text(mcp_client, "duels_matchmaking", action="leave")
         assert text.startswith("Error:")
