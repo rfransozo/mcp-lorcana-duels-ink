@@ -499,14 +499,35 @@ no `coconutAbilitySpent`, no lock, no per-turn counter; the bundle's
 `coconutAbilitySpent` is a locale string, not a field. So there is no flag we
 are failing to read.
 
-The likely reason, unproven: **a playground reports `isScenario: true`**, and a
-scenario appears not to run the format's own engine. The renderer now says so
-in the header, because a sandbox that silently withholds an ability otherwise
-reads as a broken game.
+That was first blamed on the playground being a scenario (`isScenario: true`).
+**A real four-player Coconut game disproved it.** Two opponents' Coconuts fired
+repeatedly, one of them winning the game outright:
 
-The consequence for testing: a playground can prove a Coconut is **present**
-and can exercise everything the normal tools do. It cannot exercise the
-format's ability. That still needs a real Coconut table.
+```
+Belle & Beast - Certain as the Sun's CERTAIN AS THE SUN draws a card
+Aladdin & Genie - Mischievous Pals's MISCHIEVOUS PALS grants 2 lore (24 -> 26)
+GAME_END: Opponent won with 26 lore!
+```
+
+So the format's engine works. What divides the pool is the **kind** of ability:
+
+| Coconut | Ability | Reached us? |
+|---|---|---|
+| `coconut-020` Belle & Beast | "Whenever ... readies, draw a card" | yes, every time |
+| `coconut-023` Aladdin & Genie | "Whenever you draw ... gain 2 lore" | yes, won the game |
+| `coconut-004` Stitch - Rock Star | "Once during your turn, you **may play** ... for free" | never offered |
+
+A **triggered** Coconut resolves by itself and needs nothing from us. An
+**activated or optional** one is never offered: `availableActions.cards[<the
+Coconut>]` stays `{}`, a cost-2 character in hand still reports
+`playBlockedReason: "Need 2 ink"` with zero ink, and `ACTIVATE_ABILITY` on it
+is refused with *"Card does not have this ability."* How the site's own client
+reaches it, if it can, is still unknown - the bundle has no `COCONUT` action
+name anywhere.
+
+Practical consequence: a Coconut deck whose card triggers plays fine through
+these tools; one that has to be *used* does not, and `coconut-004` is the one
+we own.
 
 Playground results are not games: they do not count, rank or appear in history.
 
@@ -526,6 +547,39 @@ inferred ones:
 ink drop. The site's own API docs call it an experiment, 1v1 constructed only,
 and not combinable with Coconut. `deckOutBehavior: "recycle"` means Pack Rush
 does not lose on an empty deck - it reshuffles.
+
+## Fields the wire sends that we learned late
+
+Found by `src/telemetry.py` in one ranked four-player game. They are listed
+here because each was invisible in a way that looked like nothing being wrong.
+
+**`removalVoteCall`** - the vote to eject a player who stopped responding, and
+the undo vote that rides with it. We read `removalVoteCalled`, a guess with a
+trailing "d" that the site has never sent, so **eight** real votes in a single
+game were never surfaced. The vote is timed, which makes not seeing it a silent
+abstention. Only the outer key is confirmed; the renderer hands back the raw
+object when its inner names do not match, rather than an empty shell.
+
+**`select_modal`** - a prompt type meaning "choose one": an opponent to target,
+or one of a card's two modes. There was no branch for it, so the fallback sent
+no choice and the engine answered `Invalid prompt response` while the turn sat
+there burning the clock. The answer is `{promptId, type: "select_modal",
+optionId}`, and the prompt's `options` carry both `id` and `label`.
+
+**`lastDamageSource`, `lastDamageWasChallenge`, `wasChallengedThisTurn`** - on
+every board card, 19 sightings in one game. Cards read these: "if this
+character was challenged this turn".
+
+**`revealedHand`** - an opponent's hand after one of our cards makes them
+reveal it. We paid a card for the information and then never looked at it.
+
+**`turnGateState`** - `charactersBanishedThisTurn`,
+`cardsPutIntoDiscardThisTurn`, `cardsDiscardedFromHandThisTurn`, per player.
+Conditions we could not evaluate without it.
+
+**`cardBadges`** on a prompt - the lore each target is worth, which is exactly
+the number the choice turns on. It was on the "unimplemented" list and won a
+lore in the game that found it.
 
 ## One socket per player
 

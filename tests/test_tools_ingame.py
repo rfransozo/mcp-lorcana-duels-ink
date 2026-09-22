@@ -191,6 +191,36 @@ class TestNumericAndUnseenPrompts:
         assert response["targetInstanceIds"] == [games.FIELD_ELSA]
         assert response["cardInstanceIds"] == [games.HAND_SONG]
 
+    async def test_a_modal_prompt_is_answered_by_option_id(self, router, mcp_client):
+        """`select_modal` had no branch at all.
+
+        The fallback sent no choice, the engine replied 'Invalid prompt
+        response', and the turn sat on the prompt burning the clock. The wire
+        key is optionId.
+        """
+        server, _text = await answer(
+            router, mcp_client, prompts.SELECT_MODAL, choice="2"
+        )
+        response = server.received[-1]["action"]["response"]
+        assert response["type"] == "select_modal"
+        assert response["optionId"] == "2"
+
+    async def test_a_modal_prompt_takes_the_label_too(self, router, mcp_client):
+        """The id is a bare '1' or '2'; the label is the player's name."""
+        server, _text = await answer(
+            router, mcp_client, prompts.SELECT_MODAL, choice="Supxr"
+        )
+        assert server.received[-1]["action"]["response"]["optionId"] == "2"
+
+    async def test_a_modal_prompt_refuses_an_option_it_does_not_have(
+        self, router, mcp_client
+    ):
+        """Better a refusal naming the options than a silent wrong answer."""
+        _server, text = await answer(
+            router, mcp_client, prompts.SELECT_MODAL, choice="nobody"
+        )
+        assert text.startswith("Error:") and "select_modal" in text
+
     async def test_an_options_summary_falls_back_to_the_whole_prompt(
         self, router, mcp_client
     ):

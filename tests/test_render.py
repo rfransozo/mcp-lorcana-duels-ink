@@ -1063,6 +1063,79 @@ class TestACoconutGameWithoutCoconuts:
         assert "coconuts_in_play" not in payload
 
 
+class TestWhatAFourPlayerCoconutFound:
+    """Five fields the wire had been sending all along.
+
+    Every one was found by `src/telemetry.py` during a single ranked Coconut
+    game - which is the first time the recorder paid for itself.
+    """
+
+    async def test_a_removal_vote_is_seen(self, catalog):
+        """The key is `removalVoteCall`.
+
+        We read `removalVoteCalled`, a guess with a trailing "d" the site has
+        never sent, so eight real votes in one game were invisible. The vote
+        is timed, so not seeing it is a silent abstention.
+        """
+        game = games.coconut_table()
+        game["removalVoteCall"] = {
+            "targetPlayer": 2, "votesFor": 1, "votesNeeded": 3, "calledBy": 1,
+        }
+        payload = await render_game_state(game, catalog)
+        assert payload["removal_vote"]["target_player"] == 2
+        assert payload["removal_vote"]["votes_needed"] == 3
+
+    async def test_an_unfamiliar_vote_shape_is_handed_over_whole(self, catalog):
+        """Only the outer key is confirmed; the inner names are still guesses.
+
+        A shell with every field None would read as 'no vote in progress',
+        which is the same failure again in a new costume.
+        """
+        game = games.coconut_table()
+        game["removalVoteCall"] = {"somethingNew": 7}
+        payload = await render_game_state(game, catalog)
+        assert payload["removal_vote"]["raw"] == {"somethingNew": 7}
+
+    async def test_no_vote_stays_none(self, catalog):
+        payload = await render_game_state(games.coconut_table(), catalog)
+        assert payload["removal_vote"] is None
+
+    async def test_a_challenged_character_says_so(self, catalog):
+        """Cards read this: 'if this character was challenged this turn'."""
+        game = games.playing()
+        game["myPlayer"]["field"][0].update({
+            "wasChallengedThisTurn": True,
+            "lastDamageWasChallenge": True,
+            "lastDamageSource": "inst-opp-pete",
+        })
+        payload = await render_game_state(game, catalog)
+        card = payload["me"]["field"][0]
+        assert card["challenged_this_turn"] is True
+        assert card["last_damage_from_challenge"] is True
+        assert card["last_damage_source"] == "inst-opp-pete"
+
+    async def test_a_revealed_hand_is_shown(self, catalog):
+        """We paid a card for this information and then threw it away.
+
+        Mowgli - Man Cub makes an opponent reveal their hand; the wire sent it
+        under `revealedHand` and nothing read it.
+        """
+        game = games.coconut_table(players=2)
+        game["opponents"][0]["revealedHand"] = [
+            games.card("inst-revealed-1", "10-71"),
+        ]
+        payload = await render_game_state(game, catalog)
+        assert payload["opponents"][0]["revealed_hand"]
+        assert "revealed" in game_state_markdown(payload).lower()
+
+    async def test_turn_counters_are_carried(self, catalog):
+        """'If a character was banished this turn' needs the count."""
+        game = games.playing()
+        game["turnGateState"] = {"charactersBanishedThisTurn": {"1": 2}}
+        payload = await render_game_state(game, catalog)
+        assert payload["turn_counters"]["charactersBanishedThisTurn"] == {"1": 2}
+
+
 class TestScenario:
     """A playground is a scenario, and a scenario is not a game.
 

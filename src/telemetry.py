@@ -27,7 +27,7 @@ ENV_VAR = "DUELS_TELEMETRY_PATH"
 PLAYER_KEYS = {
     "hand", "field", "items", "inkwell", "discard", "deckCount", "lore",
     "inkDrops", "handCount", "coconutCard", "eliminated", "name",
-    "playerNumber", "seat", "player", "revealedCardsThisTurn",
+    "playerNumber", "seat", "player", "revealedCardsThisTurn", "revealedHand",
 }
 TOP_KEYS = {
     "id", "status", "turnNumber", "viewingAs", "currentPlayer", "stateVersion",
@@ -37,12 +37,14 @@ TOP_KEYS = {
     "opponentHasPendingPrompts", "victoryReason", "promptSourceCard",
     "canRequestUndo", "allowFreeUndo", "undoTimeCost", "nextUndoHasRevealedInfo",
     "canUndoChoice", "canCancelInProgressAbility", "canRewindAbilityChoice",
-    "undoDeclineLimitReached", "removalVoteCalled", "isScenario",
+    "undoDeclineLimitReached", "removalVoteCall", "isScenario",
+    "turnGateState",
 }
 CARD_KEYS = {
     "definitionId", "instanceId", "damage", "exerted", "justPlayed",
     "appliedEffects", "cardsUnder", "effects", "locationInstanceId",
-    "hasQuestedThisTurn",
+    "hasQuestedThisTurn", "wasChallengedThisTurn", "lastDamageWasChallenge",
+    "lastDamageSource",
 }
 PROMPT_KEYS = {
     "id", "player", "type", "message", "required", "optional", "triggers",

@@ -83,6 +83,19 @@ ORDER_CARDS = {
     "cardInstanceIds": [HAND_FLOTSAM, HAND_SONG, HAND_MUSHU],
 }
 
+SELECT_MODAL = {
+    "id": "prompt-modal-1",
+    "player": 1,
+    "type": "select_modal",
+    "message": "chooseOpponent",
+    "required": True,
+    "displayMode": "player",
+    "options": [
+        {"id": "1", "label": "Floodborn", "seat": 1},
+        {"id": "2", "label": "Supxr", "seat": 2},
+    ],
+}
+
 SELECT_NUMERIC = {
     "id": "prompt-numeric-1",
     "player": 1,

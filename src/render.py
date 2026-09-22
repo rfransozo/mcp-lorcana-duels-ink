@@ -133,6 +133,15 @@ async def _describe_card(
         out["location_instance_id"] = card["locationInstanceId"]
     if card.get("hasQuestedThisTurn"):
         out["quested_this_turn"] = True
+    # Cards care about this: "if this character was challenged this turn",
+    # "if a character was damaged by a challenge". The wire has carried it all
+    # along - 19 sightings in a single four-player game - and nothing read it.
+    if card.get("wasChallengedThisTurn"):
+        out["challenged_this_turn"] = True
+    if card.get("lastDamageWasChallenge"):
+        out["last_damage_from_challenge"] = True
+    if card.get("lastDamageSource"):
+        out["last_damage_source"] = card["lastDamageSource"]
 
     if actions:
         can = [k for k, v in actions.items() if v is True and k not in NON_ACTION_FLAGS]
@@ -644,18 +653,40 @@ def _removal_vote(game: dict) -> Optional[dict]:
     Only multiplayer has it: with one opponent there is nobody left to vote
     with, so the key is absent and this is None.
     """
-    called = game.get("removalVoteCalled")
+    # The key is `removalVoteCall`. We read `removalVoteCalled` - a guess,
+    # with a "d" the wire has never sent - so eight real votes in one game
+    # went unseen, and the vote is timed: not answering is a silent abstention.
+    called = game.get("removalVoteCall")
+    if called is None:
+        called = game.get("removalVoteCalled")
     if not called:
         return None
-    if isinstance(called, dict):
-        return {
-            "target_player": called.get("targetPlayer") or called.get("target"),
-            "votes_for": called.get("votesFor") or called.get("accepted"),
-            "votes_needed": called.get("votesNeeded") or called.get("required"),
-            "i_have_voted": bool(called.get("hasVoted") or called.get("myVote") is not None),
-            "called_by": called.get("calledBy"),
-        }
-    return {"target_player": called}
+    if not isinstance(called, dict):
+        return {"target_player": called}
+
+    vote = {
+        "target_player": called.get("targetPlayer") or called.get("target"),
+        "votes_for": called.get("votesFor") or called.get("accepted"),
+        "votes_needed": called.get("votesNeeded") or called.get("required"),
+        "i_have_voted": bool(called.get("hasVoted") or called.get("myVote") is not None),
+        "called_by": called.get("calledBy"),
+    }
+    # Those inner names are still guesses - only the outer key is confirmed.
+    # Rather than hand back a hollow shell, say what actually arrived.
+    if not any(v for k, v in vote.items() if k != "i_have_voted"):
+        vote["raw"] = called
+    return vote
+
+
+def _revealed_hand(player: dict) -> list[dict]:
+    """An opponent's hand, revealed by an effect of ours.
+
+    Mowgli - Man Cub makes a chosen opponent reveal their hand, and the wire
+    duly sent it. Nothing read it, so we paid a card for information we then
+    threw away - the worst kind of bug, because it looks like nothing.
+    """
+    cards = player.get("revealedHand")
+    return [c for c in cards if isinstance(c, dict)] if isinstance(cards, list) else []
 
 
 def _revealed(player: dict) -> list[dict]:
@@ -731,6 +762,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
                 "items": await _describe_zone(catalog, seat.get("items"), action_map),
                 "coconut": await _describe_zone(catalog, _coconut_zone(seat)),
                 "revealed": await _describe_zone(catalog, _revealed(seat)),
+                "revealed_hand": await _describe_zone(catalog, _revealed_hand(seat)),
             }
         )
 
@@ -747,6 +779,9 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         # availableActions entry while a cost-2 character in hand still
         # reports "Need 2 ink". Worth saying, or the sandbox reads as a bug.
         "is_scenario": game.get("isScenario"),
+        # Counters cards read: "if a character was banished this turn", "if
+        # you discarded a card this turn". Conditions we could not evaluate.
+        "turn_counters": game.get("turnGateState") or None,
         "clock": _clock(game),
         "undo": _undo(game),
         "removal_vote": _removal_vote(game),
@@ -1143,6 +1178,13 @@ def game_state_markdown(payload: dict) -> str:
             "format's whole engine is missing, so play the deck on its "
             "cards alone and do not wait for an ability that cannot arrive."
         )
+    for seat in opponents:
+        if seat.get("revealed_hand"):
+            sections.append(
+                f"## {seat.get('name') or 'Opponent'} hand (revealed)\n"
+                + "\n".join(_card_line(c, show_actions=False, seen=seen)
+                             for c in seat["revealed_hand"])
+            )
     if me.get("field"):
         sections.append(
             "## Your board\n" + "\n".join(_card_line(c, seen=seen) for c in me["field"])

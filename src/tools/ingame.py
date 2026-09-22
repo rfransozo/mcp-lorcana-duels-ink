@@ -1107,6 +1107,27 @@ async def duels_respond_to_prompt(
             {"type": "order_cards", "orderedCardInstanceIds": list(selected_card_ids)}
         )
 
+    elif ptype == "select_modal":
+        # "Choose one" - an opponent to target, or one of a card's two modes.
+        # There was no branch for it, so the fallback sent no choice at all
+        # and the engine answered "Invalid prompt response" while the turn
+        # sat there. The key is optionId, and the prompt's own options carry
+        # both the id and a label, so either is accepted here.
+        options = [o for o in (prompt.get("options") or []) if isinstance(o, dict)]
+        wanted = (choice or "").strip()
+        chosen = None
+        for option in options:
+            oid, label = str(option.get("id", "")), str(option.get("label", ""))
+            if wanted and wanted.lower() in (oid.lower(), label.lower()):
+                chosen = oid
+                break
+        if chosen is None:
+            raise DuelsError(
+                "This is a select_modal prompt - pass choice with one option's "
+                f"id or label. {_prompt_options(prompt)}"
+            )
+        response.update({"type": "select_modal", "optionId": chosen})
+
     elif ptype == "select_numeric":
         if numeric_value is None:
             raise DuelsError(
