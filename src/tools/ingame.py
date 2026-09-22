@@ -27,6 +27,10 @@ from ..toolkit import progress, tool_errors
 
 # Response `type` to use for each prompt `type`. Triggers are the exception:
 # they resolve or skip rather than echoing their own name.
+# How long to let the server's own state push catch up before rendering.
+# Short on purpose: it is a settle, not a wait.
+STATE_SETTLE_SECONDS = 0.6
+
 PROMPT_RESPONSE_TYPES = {
     "boolean": "boolean",
     "select_target": "select_target",
@@ -148,7 +152,20 @@ async def _state_reply(
     response_format: ResponseFormat,
     headline: str = "",
 ) -> str:
-    """Render the post-action state so the agent immediately sees the result."""
+    """Render the post-action state so the agent immediately sees the result.
+
+    The socket's cached game can still be the one from before the action: the
+    server acknowledges first and pushes the new state a moment later. Rendered
+    straight away it reported "YOUR TURN" immediately after a successful
+    END_TURN, and the next call was refused as "Not your turn" - a contradiction
+    the caller had no way to resolve except by asking again.
+    """
+    revision = conn.revision
+    await conn.wait_for_update(STATE_SETTLE_SECONDS)
+    if conn.revision == revision:
+        # Nothing arrived. Some actions genuinely change nothing visible, so
+        # this is not an error - the cached state is simply the current one.
+        pass
     game = await conn.refresh()
     payload = await render_game_state(game, app.catalog)
     if headline:
@@ -1054,6 +1071,13 @@ async def duels_respond_to_prompt(
         )
 
     elif ptype == "select_card":
+        if target_instance_ids and not selected_card_ids:
+            raise DuelsError(
+                "This is a select_card prompt - pass selected_card_ids, not "
+                "target_instance_ids. Answered the other way it resolves as "
+                "'chose nothing', which cannot be taken back. "
+                + _prompt_options(prompt)
+            )
         if not selected_card_ids and prompt.get("minSelect"):
             raise DuelsError(
                 "This is a select_card prompt - pass selected_card_ids. "

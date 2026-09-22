@@ -387,6 +387,33 @@ State: `canRequestUndo`, `allowFreeUndo`, `undoTimeCost`,
 while a vote is live. A finished game also carries `victoryReason`, without
 which a win on lore and a win on a timeout read identically.
 
+## Prompts name nothing
+
+A prompt lists instance ids and stops there. `chooseCardFromRevealed` offers
+four ids; nothing in the prompt says what the cards are, so a choice made from
+the prompt alone is a choice made blind - which is how two picks were made by
+taking the first id in a ranked game.
+
+The names are in the state, in three places the renderer had to learn:
+
+* **`myPlayer.revealedCardsThisTurn`** (and the same on each opponent) - a
+  zone of its own, and the only place the cards behind a reveal prompt exist.
+* **`promptSourceCard`** at the top level - the card the prompt came from,
+  which is not necessarily in any zone.
+* **`zoneGroups`** on a `select_card` prompt - the same ids split by the zone
+  they came from.
+
+The site's own client builds exactly this index before it draws the dialog.
+
+**`select_card` answered with the wrong field is answered, not refused.** Sent
+`targetInstanceIds` instead of `cardInstanceIds`, the server resolves the
+prompt as "chose nothing" and moves on - the four cards go to the bottom of the
+deck and the choice is gone. With `minSelect: 0` nothing anywhere reports a
+problem.
+
+`undoTimeCost` is in **milliseconds**, like every other duration here. Read as
+seconds it renders "30000s off your clock".
+
 ## Locations
 
 A character at a location carries `locationInstanceId`; the location itself is

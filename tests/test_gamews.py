@@ -32,6 +32,7 @@ class FakeGameServer:
         silent: bool = False,
         never_ack: bool = False,
         ack_key: str = "success",
+        update_delay: float = 0.0,
     ) -> None:
         self.game = game or games.playing()
         self.accept = accept
@@ -42,6 +43,9 @@ class FakeGameServer:
         self.never_ack = never_ack
         # Some acknowledgements come back as `ok` rather than `success`.
         self.ack_key = ack_key
+        # The real server acknowledges first and pushes the new state a moment
+        # later; this reproduces that gap.
+        self.update_delay = update_delay
         # Pushed right after init, the way the real server backfills history
         # on connect.
         self.logs = logs or []
@@ -106,6 +110,8 @@ class FakeGameServer:
                                     "requestId": message.get("requestId")})
                     )
                     self.game = {**self.game, "stateVersion": self.game.get("stateVersion", 0) + 1}
+                    if self.update_delay:
+                        await asyncio.sleep(self.update_delay)
                     await websocket.send(json.dumps({"type": "game_update", "game": self.game}))
                 else:
                     await websocket.send(

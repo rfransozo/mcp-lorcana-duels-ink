@@ -294,6 +294,87 @@ class TestMatchmaking:
         assert not text.startswith("Error:")
         assert "Still queued" in text and "not an error" in text
 
+    async def test_the_coin_toss_can_be_answered_on_arrival(
+        self, router, authed_mcp_client, monkeypatch
+    ):
+        """The toss is the shortest clock in the game - ten to fifteen seconds.
+
+        Reading the state first and answering second spends all of it, and the
+        server picks for you. That is how a ranked game began on somebody
+        else's choice.
+        """
+        monkeypatch.setattr("src.matchmaking.HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr("src.matchmaking.POLL_SECONDS", 0.01)
+        router.json_on("/api/matchmaking/join", {"status": "queued"})
+        router.json_on("/api/matchmaking/heartbeat", {"ok": True})
+        router.json_on(
+            "/api/account/active-games", {"games": [{"id": games.GAME_ID}]}
+        )
+        router.json_on("/api/matchmaking/leave", {"success": True})
+        async with FakeGameServer(games.coin_toss()) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token",
+                {"token": "t", "wsUrl": server.url},
+            )
+            await call_text(
+                authed_mcp_client,
+                "duels_matchmaking",
+                action="join",
+                queue_id="quick-play",
+                deck_id=DECK_ID,
+            )
+            text = await call_text(
+                authed_mcp_client,
+                "duels_matchmaking",
+                action="wait",
+                timeout_seconds=5,
+                on_match_choose="play",
+            )
+            sent = [m["action"] for m in server.received if m.get("action")]
+        assert any(a["type"] == "CHOOSE_STARTING_PLAYER" for a in sent)
+        assert sent[-1]["choice"] == "play"
+        assert "you go first" in text
+
+    async def test_a_nonsense_choice_is_refused_before_queueing(
+        self, authed_mcp_client
+    ):
+        text = await call_text(
+            authed_mcp_client,
+            "duels_matchmaking",
+            action="wait",
+            on_match_choose="coin",
+        )
+        assert text.startswith("Error:") and "'play' or 'draw'" in text
+
+    async def test_without_the_choice_nothing_is_sent(
+        self, router, authed_mcp_client, monkeypatch
+    ):
+        monkeypatch.setattr("src.matchmaking.HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr("src.matchmaking.POLL_SECONDS", 0.01)
+        router.json_on("/api/matchmaking/join", {"status": "queued"})
+        router.json_on("/api/matchmaking/heartbeat", {"ok": True})
+        router.json_on(
+            "/api/account/active-games", {"games": [{"id": games.GAME_ID}]}
+        )
+        router.json_on("/api/matchmaking/leave", {"success": True})
+        async with FakeGameServer(games.coin_toss()) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token",
+                {"token": "t", "wsUrl": server.url},
+            )
+            await call_text(
+                authed_mcp_client,
+                "duels_matchmaking",
+                action="join",
+                queue_id="quick-play",
+                deck_id=DECK_ID,
+            )
+            await call_text(
+                authed_mcp_client, "duels_matchmaking", action="wait", timeout_seconds=5
+            )
+            sent = [m["action"] for m in server.received if m.get("action")]
+        assert not any(a["type"] == "CHOOSE_STARTING_PLAYER" for a in sent)
+
     async def test_leaving_stops_the_heartbeat_too(
         self, router, authed_mcp_client, monkeypatch
     ):

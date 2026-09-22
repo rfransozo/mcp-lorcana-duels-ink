@@ -893,6 +893,19 @@ async def duels_matchmaking(
             le=600,
         ),
     ] = 120,
+    on_match_choose: Annotated[
+        Optional[str],
+        Field(
+            default=None,
+            description=(
+                "For action='wait': answer the coin toss the moment the match "
+                "lands, without a second round trip. 'play' goes first and skips "
+                "the first draw; 'draw' goes second and draws on turn one. Omit "
+                "to decide yourself - but the toss is on a ~15 second clock."
+            ),
+            max_length=8,
+        ),
+    ] = None,
     response_format: ResponseFmt = ResponseFormat.MARKDOWN,
 ) -> str:
     """Runs the ranked queue end to end: join it, wait in it, or stop searching.
@@ -912,6 +925,7 @@ async def duels_matchmaking(
 
     Examples:
     - "Queue for ranked" -> action='join', queue_id='core-bo1', deck_id=...
+    - "Wait for my opponent, and go first" -> action='wait', on_match_choose='play'
     - "Wait for my opponent" -> action='wait'
     - "Keep waiting, it is slow" -> action='wait', timeout_seconds=300
     - "Stop searching" -> action='leave'
@@ -923,6 +937,8 @@ async def duels_matchmaking(
         deck_id (Optional[str]): Required when action='join'.
         competitive_only (bool): Competitive pool only. Default False.
         timeout_seconds (int): 5-600, default 120. Used by action='wait'.
+        on_match_choose (Optional[str]): 'play' or 'draw', answered the moment
+            the match lands.
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
@@ -938,6 +954,11 @@ async def duels_matchmaking(
     wanted = (action or "wait").strip().lower()
     if wanted not in ("join", "wait", "leave"):
         raise DuelsError(f"action must be join, wait or leave. Got {action!r}.")
+    choice = (on_match_choose or "").strip().lower()
+    if choice and choice not in ("play", "draw"):
+        raise DuelsError(
+            f"on_match_choose must be 'play' or 'draw'. Got {on_match_choose!r}."
+        )
     app.client.require_auth("Ranked matchmaking")
 
     if wanted == "leave":
@@ -957,13 +978,41 @@ async def duels_matchmaking(
             )
         result = await app.matchmaker.wait_for_match(timeout_seconds)
 
+        if choice and result.get("game_id"):
+            # The toss carries its own clock, and it is the shortest in the
+            # game: ten to fifteen seconds. Reading the state first and
+            # answering second spends all of it, and the server picks for you -
+            # which is exactly how a ranked game began on somebody else's
+            # choice. Declared up front, the answer goes out in the same call
+            # the pairing arrives in.
+            result["starting_player_choice"] = choice
+            try:
+                conn = await app.games.get(result["game_id"])
+                await conn.send_action(
+                    {"type": "CHOOSE_STARTING_PLAYER", "choice": choice}
+                )
+                result["starting_player_sent"] = True
+            except DuelsError as exc:
+                # Losing the toss is not losing the match: the game is playable
+                # either way, so this reports rather than raises.
+                result["starting_player_sent"] = False
+                result["starting_player_error"] = str(exc)
+
         def waited(p: dict) -> str:
             if p.get("game_id"):
-                return join_lines([
-                    f"**Match found.** Game `{p['game_id']}`",
-                    "",
-                    "There is a real person waiting - play with duels_get_game_state.",
-                ])
+                lines = [f"**Match found.** Game `{p['game_id']}`", ""]
+                if p.get("starting_player_sent"):
+                    going = "first" if p["starting_player_choice"] == "play" else "second"
+                    lines += [f"_Coin toss answered: you go {going}._", ""]
+                elif p.get("starting_player_error"):
+                    lines += [
+                        f"_The coin toss could not be answered ({p['starting_player_error']})_",
+                        "",
+                    ]
+                lines.append(
+                    "There is a real person waiting - play with duels_get_game_state."
+                )
+                return join_lines(lines)
             return join_lines([
                 f"Still queued in {p.get('queue_id')} after {timeout_seconds}s "
                 f"({p.get('beats')} heartbeats sent).",

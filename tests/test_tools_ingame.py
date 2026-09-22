@@ -545,3 +545,55 @@ class TestRemovalVote:
             router, mcp_client, self.voting(), action="cancel"
         )
         assert server.received[-1]["action"]["type"] == "CANCEL_REMOVAL_VOTE"
+
+
+class TestAnsweringAPromptTheWrongWay:
+    """The answer that was accepted and threw the choice away."""
+
+    async def test_a_select_card_refuses_target_instance_ids(self, router, mcp_client):
+        """minSelect was 0, so the old guard stayed quiet: an empty selection
+        went out, four cards went to the bottom of the deck, and the Princess
+        they were dug for was gone."""
+        prompt = {"id": "p1", "player": 1, "type": "select_card",
+                  "cardInstanceIds": ["c1", "c2"], "minSelect": 0, "maxSelect": 1}
+        server, text = await with_game(
+            router,
+            mcp_client,
+            games.with_prompt(prompt),
+            tool="duels_respond_to_prompt",
+            target_instance_ids=["c1"],
+        )
+        assert text.startswith("Error:")
+        assert "selected_card_ids" in text and "target_instance_ids" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_the_right_field_still_works(self, router, mcp_client):
+        prompt = {"id": "p1", "player": 1, "type": "select_card",
+                  "cardInstanceIds": ["c1", "c2"], "minSelect": 0, "maxSelect": 1}
+        server, _text = await with_game(
+            router,
+            mcp_client,
+            games.with_prompt(prompt),
+            tool="duels_respond_to_prompt",
+            selected_card_ids=["c1"],
+        )
+        assert server.received[-1]["action"]["response"]["cardInstanceIds"] == ["c1"]
+
+
+class TestTheStateWeShowIsTheStateAfter:
+    """The socket's cached game can still be the one from before the action."""
+
+    async def test_a_lagging_update_is_waited_for(self, router, mcp_client):
+        """Rendered without waiting, a successful END_TURN still reported
+        YOUR TURN and the next call was refused as "Not your turn"."""
+        async with FakeGameServer(games.playing(), update_delay=0.2) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token", {"token": "t", "wsUrl": server.url}
+            )
+            payload = await call_json(
+                mcp_client, "duels_quest", game_id=games.GAME_ID,
+                card_instance_id=games.FIELD_ELSA,
+            )
+        # The fake bumps stateVersion on every action; seeing the bump proves
+        # the render waited for the push rather than using the cached state.
+        assert payload["state_version"] > games.playing()["stateVersion"]

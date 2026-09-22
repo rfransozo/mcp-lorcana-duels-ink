@@ -896,9 +896,11 @@ class TestTakingItBack:
         assert "taken back (free)" in text and "duels_undo" in text
 
     async def test_a_timed_undo_says_what_it_costs(self, catalog):
-        game = games.playing(canRequestUndo=True, undoTimeCost=30)
-        text = game_state_markdown(await render_game_state(game, catalog))
-        assert "30s off your clock" in text
+        """The wire sends milliseconds. Read as seconds it said "30000s"."""
+        game = games.playing(canRequestUndo=True, undoTimeCost=30000)
+        payload = await render_game_state(game, catalog)
+        assert payload["undo"]["time_cost_ms"] == 30000
+        assert "0:30 off your clock" in game_state_markdown(payload)
 
     async def test_a_table_with_undo_off_says_nothing(self, catalog):
         payload = await render_game_state(games.playing(), catalog)
@@ -959,3 +961,57 @@ class TestWhyTheGameEnded:
         game["status"], game["winner"] = "finished", 4
         text = game_state_markdown(await render_game_state(game, catalog))
         assert "Game over -" in text
+
+
+class TestAPromptNamesItsCards:
+    """A prompt lists instance ids and nothing else.
+
+    "Choose one of these four" arrived as four UUIDs and was answered by
+    picking the first, twice in one ranked game - once on Imperial Invitation
+    and once on Develop Your Brain. Both were blind.
+    """
+
+    def asking(self, ids, **extra):
+        prompt = {"id": "p1", "player": 1, "type": "select_card",
+                  "cardInstanceIds": list(ids), **extra}
+        return games.playing(pendingPrompts=[prompt])
+
+    async def test_a_card_on_the_board_is_named(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.asking([games.FIELD_ELSA]), catalog)
+        )
+        assert "The cards it is asking about" in text
+        assert "Elsa" in text.split("The cards it is asking about")[1]
+
+    async def test_a_card_in_hand_is_named(self, catalog):
+        payload = await render_game_state(self.asking([games.HAND_MUSHU]), catalog)
+        assert "Mushu" in payload["prompt_cards"][games.HAND_MUSHU]
+
+    async def test_a_revealed_card_is_named(self, catalog):
+        """Imperial Invitation's four live here and nowhere else."""
+        game = self.asking(["rev-1"])
+        game["myPlayer"]["revealedCardsThisTurn"] = [games.card("rev-1", "10-45")]
+        payload = await render_game_state(game, catalog)
+        assert payload["prompt_cards"]["rev-1"]
+        assert payload["me"]["revealed"][0]["instance_id"] == "rev-1"
+
+    async def test_an_opponents_card_is_named(self, catalog):
+        payload = await render_game_state(self.asking([games.OPP_PETE]), catalog)
+        assert games.OPP_PETE in payload["prompt_cards"]
+
+    async def test_targets_are_named_too_not_just_card_lists(self, catalog):
+        game = games.playing(pendingPrompts=[{
+            "id": "p1", "type": "select_target", "validTargets": [games.OPP_PETE],
+        }])
+        payload = await render_game_state(game, catalog)
+        assert games.OPP_PETE in payload["prompt_cards"]
+
+    async def test_an_id_in_no_zone_is_reported_not_hidden(self, catalog):
+        """Better to say it cannot be named than to print a bare UUID."""
+        payload = await render_game_state(self.asking(["inst-nowhere"]), catalog)
+        assert payload["prompt_cards_unknown"] == ["inst-nowhere"]
+        assert "cannot be named" in game_state_markdown(payload)
+
+    async def test_a_game_with_no_prompt_has_no_legend(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert "prompt_cards" not in payload

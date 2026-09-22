@@ -625,7 +625,9 @@ def _undo(game: dict) -> Optional[dict]:
     out = {
         "can_request": bool(game.get("canRequestUndo")),
         "free": bool(game.get("allowFreeUndo")),
-        "time_cost_seconds": game.get("undoTimeCost"),
+        # Milliseconds, like every other duration on this wire. Named
+        # `_seconds` once, it rendered "30000s off your clock".
+        "time_cost_ms": game.get("undoTimeCost"),
         "would_reveal_information": bool(game.get("nextUndoHasRevealedInfo")),
         "can_undo_choice": bool(game.get("canUndoChoice")),
         "can_cancel_ability": bool(game.get("canCancelInProgressAbility")),
@@ -653,6 +655,39 @@ def _removal_vote(game: dict) -> Optional[dict]:
             "called_by": called.get("calledBy"),
         }
     return {"target_player": called}
+
+
+def _revealed(player: dict) -> list[dict]:
+    """Cards this player has turned face up this turn.
+
+    A zone of its own, and the only place the cards behind a "choose one of
+    these" prompt exist: Imperial Invitation shows four off the top of the
+    deck, and without this they are four bare UUIDs to pick between blindly.
+    """
+    cards = player.get("revealedCardsThisTurn")
+    return [c for c in cards if isinstance(c, dict)] if isinstance(cards, list) else []
+
+
+def _prompt_ids(prompts: list) -> set:
+    """Every card instance a prompt refers to, whatever field it arrived in."""
+    found: set = set()
+    for prompt in prompts or []:
+        if not isinstance(prompt, dict):
+            continue
+        for key in ("cardInstanceIds", "validTargets", "validCards",
+                    "nonSelectableCardIds", "selectedCardIds"):
+            value = prompt.get(key)
+            if isinstance(value, list):
+                found.update(v for v in value if isinstance(v, str))
+        for group in prompt.get("zoneGroups") or []:
+            if isinstance(group, dict):
+                found.update(
+                    v for v in group.get("cardInstanceIds") or [] if isinstance(v, str)
+                )
+        source = prompt.get("sourceCardInstanceId")
+        if isinstance(source, str):
+            found.add(source)
+    return found
 
 
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
@@ -693,6 +728,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
                 "field": await _describe_zone(catalog, seat.get("field"), action_map),
                 "items": await _describe_zone(catalog, seat.get("items"), action_map),
                 "coconut": await _describe_zone(catalog, _coconut_zone(seat)),
+                "revealed": await _describe_zone(catalog, _revealed(seat)),
             }
         )
 
@@ -723,6 +759,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "field": field,
             "items": items,
             "coconut": await _describe_zone(catalog, _coconut_zone(me)),
+            "revealed": await _describe_zone(catalog, _revealed(me)),
             "eliminated": bool(me.get("eliminated")),
         },
         # Kept as the first opponent so anything reading the old singular
@@ -766,6 +803,25 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             payload["victory_reason"] = game["victoryReason"]
     if game.get("pendingPrompts"):
         payload["pending_prompts"] = game["pendingPrompts"]
+        # A prompt lists instance ids and nothing else, so "choose one of
+        # these four" arrived as four UUIDs and was answered by picking the
+        # first. Every zone in the state is indexed here, including the
+        # revealed cards and the card the prompt came from, so the choice can
+        # be made on what the cards actually are.
+        named: dict[str, str] = {}
+        for seat in [payload["me"], *opponents]:
+            for zone in ("hand", "field", "items", "discard", "coconut", "revealed"):
+                for card in seat.get(zone) or []:
+                    if card.get("instance_id") and card.get("card"):
+                        named[card["instance_id"]] = card["card"]
+        source = game.get("promptSourceCard")
+        if isinstance(source, dict) and source.get("instanceId"):
+            described = await _describe_card(catalog, source)
+            if described.get("card"):
+                named[source["instanceId"]] = described["card"]
+        wanted = _prompt_ids(game["pendingPrompts"])
+        payload["prompt_cards"] = {k: v for k, v in named.items() if k in wanted}
+        payload["prompt_cards_unknown"] = sorted(wanted - set(named))
     if game.get("status") == "mulligan":
         payload["mulligan"] = game.get("mulliganState")
     if game.get("status") == "coin_toss":
@@ -1015,8 +1071,8 @@ def game_state_markdown(payload: dict) -> str:
         cost = (
             "free"
             if undo.get("free")
-            else f"{undo['time_cost_seconds']}s off your clock"
-            if undo.get("time_cost_seconds")
+            else f"{_mmss(undo['time_cost_ms'])} off your clock"
+            if undo.get("time_cost_ms")
             else "allowed"
         )
         header.extend([f"_Your last move can be taken back ({cost}) - `duels_undo`._", ""])
@@ -1029,6 +1085,17 @@ def game_state_markdown(payload: dict) -> str:
         header.append("```json")
         header.append(str(payload["pending_prompts"])[:2000])
         header.append("```\n")
+        known = payload.get("prompt_cards") or {}
+        if known:
+            header.append("The cards it is asking about:")
+            header.extend(f"- **{name}** `{inst}`" for inst, name in known.items())
+            header.append("")
+        unknown = payload.get("prompt_cards_unknown") or []
+        if unknown:
+            header.append(
+                f"_{len(unknown)} of the ids above are not in any zone this state "
+                "shows, so they cannot be named._\n"
+            )
 
     if payload.get("mulligan"):
         header.append(f"## Mulligan\n{payload['mulligan']}\n")
