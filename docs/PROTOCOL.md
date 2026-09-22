@@ -359,11 +359,9 @@ GET  /api/table/{id}/ws-token       -> {"token": "..."}     <- no host, see belo
 GET  /api/home/data                 -> {openTables, liveGames, stats}
 ```
 
-**At create the settings go at the top level, not under `config`.** Nesting
-them the way `UPDATE_SETTINGS` wants is answered 200 with a table that ignored
-every one of them. And the `config` that comes back is **sparse** - a default
-table carries three keys, and the rest appear only once set, so an absent key
-means the default rather than false.
+The `config` that comes back is **sparse**: a default table carries three keys
+and the rest appear only once set, so an absent key means the default rather
+than false.
 
 **Creation takes its settings at the top level.** A nested `config` object is
 accepted and silently dropped, so a table created "as Coconut" that way comes
