@@ -230,6 +230,37 @@ class TestTheRegistry:
         assert view and view["id"] == TABLE_ID
         await registry.close_all()
 
+    async def test_attend_waits_for_the_presence_broadcast(self, lobby):
+        """`table_init` is written before the server announces that we arrived.
+
+        Rendering it verbatim made a freshly created table report itself
+        abandoned on the very next line, because our own seat still read as
+        absent in the state we had just been handed.
+        """
+        server, _conn, client, _router = lobby
+        registry = TableRegistry(client)
+
+        async def announce_later():
+            await asyncio.sleep(0.1)
+            await server.push_update(
+                a_view(seats=[{"index": 0, "username": "Fransozo",
+                               "connected": True, "ready": True}])
+            )
+
+        task = asyncio.create_task(announce_later())
+        view = await registry.attend(TABLE_ID)
+        await task
+        assert view["seats"][0]["ready"] is True
+        await registry.close_all()
+
+    async def test_attend_can_skip_the_wait(self, lobby):
+        """Nothing is pending, so it should not sit through the grace period."""
+        _server, _conn, client, _router = lobby
+        registry = TableRegistry(client)
+        view = await registry.attend(TABLE_ID, fresh=False)
+        assert view and view["id"] == TABLE_ID
+        await registry.close_all()
+
     async def test_attend_never_fails_the_caller(self, router, make_client):
         """Presence is a bonus on top of a table call.
 

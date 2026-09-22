@@ -39,6 +39,8 @@ log = logging.getLogger("duels_mcp.tablews")
 
 PING_INTERVAL_SECONDS = 25.0
 CONNECT_TIMEOUT_SECONDS = 20.0
+# How long to let the server's presence broadcast catch up before rendering.
+PRESENCE_GRACE_SECONDS = 2.0
 
 
 class TableConnection:
@@ -213,7 +215,7 @@ class TableRegistry:
         await conn.ensure_connected()
         return conn
 
-    async def attend(self, table_id: str) -> Optional[dict]:
+    async def attend(self, table_id: str, *, fresh: bool = True) -> Optional[dict]:
         """Hold a socket open for a table, without failing the caller if it cannot.
 
         Presence is a nice-to-have on top of every table call: a lobby that
@@ -226,6 +228,14 @@ class TableRegistry:
         except DuelsError as exc:
             log.info("Not attending table %s: %s", table_id, exc)
             return None
+
+        if fresh:
+            # `table_init` is written before the server has broadcast that we
+            # arrived, so it still shows our own seat as absent. Rendering it
+            # made a table report itself abandoned one line after we created
+            # it. One bounded wait picks up the presence broadcast; if it does
+            # not come, the init view is still perfectly usable.
+            await conn.wait_for_update(PRESENCE_GRACE_SECONDS)
         return conn.view
 
     async def drop(self, table_id: str) -> None:
