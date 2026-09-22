@@ -441,3 +441,107 @@ class TestClaimingAStalledGame:
         assert text.startswith("Error:")
         for kind in ("timeout", "afk", "pregame", "ping", "respond"):
             assert kind in text
+
+
+class TestUndo:
+    """The payloads came out of the site's bundle.
+
+    `RESPOND_TO_UNDO` carries the answer as a boolean - there is no
+    RESPOND_TO_UNDO_YES - and the bare type is the shape this API answers 200
+    and ignores. `FREE_UNDO` and `CHOICE_UNDO` look like siblings and are not:
+    they are log events, so tools for them would send types nothing handles.
+    """
+
+    async def undo(self, router, mcp_client, game=None, **kwargs):
+        return await with_game(
+            router, mcp_client, game, tool="duels_undo", **kwargs
+        )
+
+    async def test_requesting_needs_the_table_to_allow_it(self, router, mcp_client):
+        server, text = await self.undo(router, mcp_client)
+        assert text.startswith("Error:") and "nothing to take back" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_requesting_when_allowed(self, router, mcp_client):
+        server, _text = await self.undo(
+            router, mcp_client, games.playing(canRequestUndo=True)
+        )
+        assert server.received[-1]["action"]["type"] == "REQUEST_UNDO"
+
+    async def test_accepting_carries_the_boolean(self, router, mcp_client):
+        server, _text = await self.undo(router, mcp_client, action="accept")
+        sent = server.received[-1]["action"]
+        assert sent["type"] == "RESPOND_TO_UNDO" and sent["accept"] is True
+
+    async def test_declining_carries_the_other_boolean(self, router, mcp_client):
+        server, _text = await self.undo(router, mcp_client, action="decline")
+        sent = server.received[-1]["action"]
+        assert sent["type"] == "RESPOND_TO_UNDO" and sent["accept"] is False
+
+    async def test_cancelling_your_own_request(self, router, mcp_client):
+        server, _text = await self.undo(router, mcp_client, action="cancel")
+        assert server.received[-1]["action"]["type"] == "CANCEL_UNDO"
+
+    async def test_stopping_an_ability_mid_resolution(self, router, mcp_client):
+        server, _text = await self.undo(router, mcp_client, action="cancel_ability")
+        assert server.received[-1]["action"]["type"] == "CANCEL_ABILITY"
+
+    async def test_rewinding_a_choice_inside_one(self, router, mcp_client):
+        server, _text = await self.undo(router, mcp_client, action="rewind_choice")
+        assert server.received[-1]["action"]["type"] == "REWIND_ABILITY_CHOICE"
+
+    async def test_an_unknown_action_lists_the_real_ones(self, router, mcp_client):
+        _server, text = await self.undo(router, mcp_client, action="rewrite_history")
+        assert text.startswith("Error:")
+        for name in ("request", "accept", "decline", "cancel_ability"):
+            assert name in text
+
+
+class TestRemovalVote:
+    """A table's way of ejecting somebody who walked away."""
+
+    def voting(self):
+        return games.coconut_table(
+            removalVoteCalled={"targetPlayer": 3, "votesFor": 1, "votesNeeded": 2}
+        )
+
+    async def vote(self, router, mcp_client, game=None, **kwargs):
+        return await with_game(
+            router, mcp_client, game, tool="duels_removal_vote", **kwargs
+        )
+
+    async def test_calling_one_names_the_target(self, router, mcp_client):
+        server, _text = await self.vote(router, mcp_client, target_player=3)
+        sent = server.received[-1]["action"]
+        assert sent["type"] == "CALL_REMOVAL_VOTE" and sent["targetPlayer"] == 3
+
+    async def test_calling_without_a_target_says_where_to_find_one(
+        self, router, mcp_client
+    ):
+        server, text = await self.vote(router, mcp_client)
+        assert text.startswith("Error:") and "player_number" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_agreeing_carries_the_boolean(self, router, mcp_client):
+        server, _text = await self.vote(
+            router, mcp_client, self.voting(), action="accept"
+        )
+        sent = server.received[-1]["action"]
+        assert sent["type"] == "RESPOND_TO_REMOVAL_VOTE" and sent["accept"] is True
+
+    async def test_refusing_carries_the_other(self, router, mcp_client):
+        server, _text = await self.vote(
+            router, mcp_client, self.voting(), action="decline"
+        )
+        assert server.received[-1]["action"]["accept"] is False
+
+    async def test_answering_a_vote_nobody_called(self, router, mcp_client):
+        server, text = await self.vote(router, mcp_client, action="accept")
+        assert text.startswith("Error:") and "no vote running" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_withdrawing_one(self, router, mcp_client):
+        server, _text = await self.vote(
+            router, mcp_client, self.voting(), action="cancel"
+        )
+        assert server.received[-1]["action"]["type"] == "CANCEL_REMOVAL_VOTE"

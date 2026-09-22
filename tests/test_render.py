@@ -885,3 +885,77 @@ class TestAGameAlreadyWon:
         """Ignoring it hands the opponent the claim."""
         payload = await render_game_state(self.timed(wasAfkPinged=True), catalog)
         assert payload["clock"]["was_pinged"] is True
+
+
+class TestTakingItBack:
+    """Whether undo exists at all is the table's rule, not the player's."""
+
+    async def test_an_available_undo_is_offered(self, catalog):
+        game = games.playing(canRequestUndo=True, allowFreeUndo=True)
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "taken back (free)" in text and "duels_undo" in text
+
+    async def test_a_timed_undo_says_what_it_costs(self, catalog):
+        game = games.playing(canRequestUndo=True, undoTimeCost=30)
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "30s off your clock" in text
+
+    async def test_a_table_with_undo_off_says_nothing(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["undo"] is None
+        assert "duels_undo" not in game_state_markdown(payload)
+
+    async def test_the_rest_of_the_undo_block_survives(self, catalog):
+        game = games.playing(
+            canCancelInProgressAbility=True, undoDeclineLimitReached=True
+        )
+        payload = await render_game_state(game, catalog)
+        assert payload["undo"]["can_cancel_ability"] is True
+        assert payload["undo"]["declines_exhausted"] is True
+
+
+class TestVotingSomebodyOut:
+    """Only a table has this: with one opponent there is nobody to vote with."""
+
+    def voting(self, **vote):
+        return games.coconut_table(
+            removalVoteCalled={"targetPlayer": 3, "votesFor": 1,
+                               "votesNeeded": 2, **vote}
+        )
+
+    async def test_a_running_vote_is_impossible_to_miss(self, catalog):
+        text = game_state_markdown(await render_game_state(self.voting(), catalog))
+        assert "vote is running to remove player 3" in text
+        assert "duels_removal_vote" in text
+
+    async def test_having_voted_already_is_said(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.voting(hasVoted=True), catalog)
+        )
+        assert "already voted" in text
+
+    async def test_the_tally_reaches_the_payload(self, catalog):
+        payload = await render_game_state(self.voting(), catalog)
+        assert payload["removal_vote"]["votes_for"] == 1
+        assert payload["removal_vote"]["votes_needed"] == 2
+
+    async def test_a_duel_has_no_vote(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["removal_vote"] is None
+
+
+class TestWhyTheGameEnded:
+    """Lore, a concession, a timeout and an absence all read identically."""
+
+    async def test_the_reason_is_named(self, catalog):
+        game = games.coconut_table()
+        game["status"], game["winner"] = "finished", 4
+        game["victoryReason"] = "timeout"
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Game over by timeout" in text
+
+    async def test_a_game_without_one_still_reads(self, catalog):
+        game = games.coconut_table()
+        game["status"], game["winner"] = "finished", 4
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "Game over -" in text

@@ -17,6 +17,8 @@ from ..gamews import GameConnection
 from ..models import CardInstanceId, GameId, Limit, ResponseFmt, ResponseFormat, SkipTriggers
 from ..render import (
     _clock,
+    _removal_vote,
+    _undo,
     game_state_markdown,
     legal_moves_markdown,
     render_game_state,
@@ -115,6 +117,25 @@ CLAIM_ACTIONS = {
 }
 # Tried in this order when the caller says 'auto'.
 CLAIM_ORDER = ("timeout", "afk", "pregame")
+
+
+# Read out of the site's bundle rather than guessed: the answer to an undo
+# request rides as `accept`, and FREE_UNDO / CHOICE_UNDO are log events, not
+# actions - building tools for those would have sent types nothing handles.
+UNDO_ACTIONS = {
+    "request": "REQUEST_UNDO",
+    "accept": "RESPOND_TO_UNDO",
+    "decline": "RESPOND_TO_UNDO",
+    "cancel": "CANCEL_UNDO",
+    "cancel_ability": "CANCEL_ABILITY",
+    "rewind_choice": "REWIND_ABILITY_CHOICE",
+}
+VOTE_ACTIONS = {
+    "call": "CALL_REMOVAL_VOTE",
+    "accept": "RESPOND_TO_REMOVAL_VOTE",
+    "decline": "RESPOND_TO_REMOVAL_VOTE",
+    "cancel": "CANCEL_REMOVAL_VOTE",
+}
 
 
 async def _conn(app: AppContext, game_id: str) -> GameConnection:
@@ -1437,3 +1458,192 @@ async def duels_claim_victory(
     action, _flag = CLAIM_ACTIONS[wanted]
     await _send(app, conn, {"type": action})
     return await _state_reply(app, conn, response_format, f"Sent {action}.")
+
+
+@mcp.tool(
+    name="duels_undo",
+    annotations={
+        "title": "Take Back a Move",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@tool_errors
+async def duels_undo(
+    ctx: Context,
+    game_id: GameId,
+    action: Annotated[
+        str,
+        Field(
+            default="request",
+            description=(
+                "'request' asks to take your last move back; 'accept'/'decline' "
+                "answer a request the opponent made; 'cancel' withdraws yours; "
+                "'cancel_ability' stops an ability mid-resolution; "
+                "'rewind_choice' re-takes the choice inside one."
+            ),
+            max_length=16,
+        ),
+    ] = "request",
+    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
+) -> str:
+    """Takes back a move, or answers the opponent asking to take back theirs.
+
+    Whether undo exists at all is the table's rule, not yours: it can be
+    unlimited, disabled, or cost 30 seconds of your clock. The state's `undo`
+    block says which, so read it before offering this to anyone.
+
+    'accept' and 'decline' are the ones that matter in a live game - an
+    unanswered request stalls the table, and declining too often stops being
+    allowed (`undo.declines_exhausted`).
+
+    Do NOT use it to undo the opponent's move; it only reaches your own.
+
+    Examples:
+    - "Undo that, wrong card" -> action='request'
+    - "They asked to undo - let them" -> action='accept'
+    - "No, keep it as played" -> action='decline'
+    - "Stop this ability, I misread it" -> action='cancel_ability'
+
+    Args:
+        ctx (Context): Injected by FastMCP.
+        game_id (str): Game UUID.
+        action (str): request | accept | decline | cancel | cancel_ability |
+            rewind_choice.
+        response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: The resulting state, rolled back if the undo landed.
+
+    Error Handling:
+        Refuses before sending when the table has undo switched off, quoting
+        what the state actually reports.
+    """
+    app = app_ctx(ctx)
+    wanted = (action or "request").strip().lower()
+    if wanted not in UNDO_ACTIONS:
+        raise DuelsError(
+            f"action must be one of: {', '.join(UNDO_ACTIONS)}. Got {action!r}."
+        )
+
+    conn = await _conn(app, game_id)
+    game = await conn.refresh()
+    state = _undo(game) or {}
+
+    if wanted == "request" and not state.get("can_request"):
+        raise DuelsError(
+            "There is nothing to take back right now - the table may have undo "
+            "disabled, or the move may already be locked in. The state's `undo` "
+            "block says which."
+        )
+
+    body: dict[str, Any] = {"type": UNDO_ACTIONS[wanted]}
+    if wanted in ("accept", "decline"):
+        # There is no RESPOND_TO_UNDO_YES: the answer rides as a boolean, and
+        # sending the bare type is the shape this API answers 200 and ignores.
+        body["accept"] = wanted == "accept"
+    await _send(app, conn, body)
+    return await _state_reply(app, conn, response_format, f"Sent {body['type']}.")
+
+
+@mcp.tool(
+    name="duels_removal_vote",
+    annotations={
+        "title": "Vote to Remove a Player",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@tool_errors
+async def duels_removal_vote(
+    ctx: Context,
+    game_id: GameId,
+    action: Annotated[
+        str,
+        Field(
+            default="call",
+            description=(
+                "'call' starts a vote (needs target_player); 'accept'/'decline' "
+                "answer one somebody else called; 'cancel' withdraws yours."
+            ),
+            max_length=12,
+        ),
+    ] = "call",
+    target_player: Annotated[
+        Optional[int],
+        Field(
+            default=None,
+            description=(
+                "For action='call': the player number to remove, as "
+                "opponents[].player_number reports it."
+            ),
+            ge=1,
+            le=4,
+        ),
+    ] = None,
+    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
+) -> str:
+    """Starts or answers a vote to remove a player who has stopped playing.
+
+    This exists only at a table: with one opponent there is nobody to vote
+    with, and claiming the game (duels_claim_victory) is the way instead. With
+    three, one absent player otherwise holds up everyone for the rest of the
+    game.
+
+    Prefer duels_claim_victory when the server already offers a claim - a claim
+    is yours alone, a vote needs the others to agree.
+
+    Do NOT call a vote on a player who is merely slow or thinking: it removes a
+    real person from a game they are still playing.
+
+    Examples:
+    - "Player 3 has been gone for ten minutes, vote them out" -> action='call', target_player=3
+    - "Someone called a vote - I agree" -> action='accept'
+    - "No, give them a minute" -> action='decline'
+
+    Args:
+        ctx (Context): Injected by FastMCP.
+        game_id (str): Game UUID.
+        action (str): call | accept | decline | cancel.
+        target_player (Optional[int]): Required when action='call'.
+        response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: The resulting state, carrying the vote's progress.
+
+    Error Handling:
+        Asks for target_player when calling a vote without one, and says so
+        when there is no vote to answer.
+    """
+    app = app_ctx(ctx)
+    wanted = (action or "call").strip().lower()
+    if wanted not in VOTE_ACTIONS:
+        raise DuelsError(
+            f"action must be one of: {', '.join(VOTE_ACTIONS)}. Got {action!r}."
+        )
+
+    conn = await _conn(app, game_id)
+    game = await conn.refresh()
+
+    body: dict[str, Any] = {"type": VOTE_ACTIONS[wanted]}
+    if wanted == "call":
+        if target_player is None:
+            raise DuelsError(
+                "action='call' needs target_player - the player number to remove, "
+                "from opponents[].player_number in duels_get_game_state."
+            )
+        body["targetPlayer"] = target_player
+    elif wanted in ("accept", "decline"):
+        if not _removal_vote(game):
+            raise DuelsError(
+                "There is no vote running in this game, so there is nothing to "
+                "answer. Start one with action='call'."
+            )
+        body["accept"] = wanted == "accept"
+
+    await _send(app, conn, body)
+    return await _state_reply(app, conn, response_format, f"Sent {body['type']}.")

@@ -16,6 +16,8 @@ DESTRUCTIVE_TOOLS = {
     "duels_delete_deck",
     "duels_concede",
     "duels_send_game_action",
+    # Ejects a real person from a game in progress.
+    "duels_removal_vote",
 }
 
 EXPECTED_RESOURCES = {

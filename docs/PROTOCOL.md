@@ -357,11 +357,32 @@ JavaScript (a Vite build, `/assets/*.js`; `game-engine-*.js` holds most of it):
 | `canPingOpponent` | `PING_OPPONENT` |
 | `wasAfkPinged` | `RESPOND_TO_AFK_PING` - **ignoring it hands them the claim** |
 
-The same bundle names two more families we do not use yet: undo
-(`REQUEST_UNDO`, `RESPOND_TO_UNDO`, `CANCEL_UNDO`, `CHOICE_UNDO`, `FREE_UNDO`,
-with `canRequestUndo` / `allowFreeUndo` / `undoTimeCost` in the state) and the
-multiplayer removal vote (`CALL_REMOVAL_VOTE`, `CANCEL_REMOVAL_VOTE`,
-`RESPOND_TO_REMOVAL_VOTE`). There is also `QUICK_CHAT`.
+### Undo and the removal vote
+
+The same bundle carries the send sites, so these are payloads rather than
+guesses:
+
+```js
+{type:"REQUEST_UNDO", scope}          {type:"RESPOND_TO_UNDO", accept}
+{type:"CANCEL_UNDO"}                  {type:"CANCEL_ABILITY"}
+{type:"REWIND_ABILITY_CHOICE"}        {type:"QUICK_CHAT", messageId}
+{type:"CALL_REMOVAL_VOTE", targetPlayer}
+{type:"RESPOND_TO_REMOVAL_VOTE", accept}
+{type:"CANCEL_REMOVAL_VOTE"}
+```
+
+**`FREE_UNDO` and `CHOICE_UNDO` are not actions.** They appear alongside the
+others in the bundle and only ever in the game-log switch, so tools for them
+would send types nothing handles - the same 200-and-nothing failure as the bare
+`SET_READY`.
+
+Both answers ride as a plain `accept` boolean; there is no RESPOND_TO_UNDO_YES.
+
+State: `canRequestUndo`, `allowFreeUndo`, `undoTimeCost`,
+`nextUndoHasRevealedInfo`, `canUndoChoice`, `canCancelInProgressAbility`,
+`canRewindAbilityChoice`, `undoDeclineLimitReached`, and `removalVoteCalled`
+while a vote is live. A finished game also carries `victoryReason`, without
+which a win on lore and a win on a timeout read identically.
 
 ## Locations
 

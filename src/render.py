@@ -614,6 +614,47 @@ def _lore_to_win(game: dict) -> int:
     return {"coconut": 25, "packrush": 15}.get(variant, 20)
 
 
+def _undo(game: dict) -> Optional[dict]:
+    """What can still be taken back, and what it would cost.
+
+    A table sets its own undo rules, so the answer is per game rather than per
+    player: `disabled` tables report nothing, `timed` ones charge the clock.
+    None of this was read, so a misplay was final even where the table said it
+    need not be.
+    """
+    out = {
+        "can_request": bool(game.get("canRequestUndo")),
+        "free": bool(game.get("allowFreeUndo")),
+        "time_cost_seconds": game.get("undoTimeCost"),
+        "would_reveal_information": bool(game.get("nextUndoHasRevealedInfo")),
+        "can_undo_choice": bool(game.get("canUndoChoice")),
+        "can_cancel_ability": bool(game.get("canCancelInProgressAbility")),
+        "can_rewind_choice": bool(game.get("canRewindAbilityChoice")),
+        "declines_exhausted": bool(game.get("undoDeclineLimitReached")),
+    }
+    return out if any(v for v in out.values()) else None
+
+
+def _removal_vote(game: dict) -> Optional[dict]:
+    """A table's way of ejecting somebody who stopped playing.
+
+    Only multiplayer has it: with one opponent there is nobody left to vote
+    with, so the key is absent and this is None.
+    """
+    called = game.get("removalVoteCalled")
+    if not called:
+        return None
+    if isinstance(called, dict):
+        return {
+            "target_player": called.get("targetPlayer") or called.get("target"),
+            "votes_for": called.get("votesFor") or called.get("accepted"),
+            "votes_needed": called.get("votesNeeded") or called.get("required"),
+            "i_have_voted": bool(called.get("hasVoted") or called.get("myVote") is not None),
+            "called_by": called.get("calledBy"),
+        }
+    return {"target_player": called}
+
+
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     """Produce the compact, agent-facing view of a game state."""
     me = game.get("myPlayer") or {}
@@ -664,6 +705,8 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "state_version": game.get("stateVersion"),
         "is_bot_game": game.get("isBotGame"),
         "clock": _clock(game),
+        "undo": _undo(game),
+        "removal_vote": _removal_vote(game),
         "game_variant": game.get("gameVariant"),
         "lore_to_win": _lore_to_win(game),
         "player_count": 1 + len(_opponent_seats(game)),
@@ -717,6 +760,10 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     if game.get("winner") is not None:
         payload["winner"] = game["winner"]
         payload["i_won"] = game["winner"] == viewing_as
+        # Lore, a concession, a timeout and an absence all end a game and read
+        # identically without this.
+        if game.get("victoryReason"):
+            payload["victory_reason"] = game["victoryReason"]
     if game.get("pendingPrompts"):
         payload["pending_prompts"] = game["pendingPrompts"]
     if game.get("status") == "mulligan":
@@ -946,10 +993,33 @@ def game_state_markdown(payload: dict) -> str:
             None,
         )
         beat_me = f"{named} (player {winner})" if named else f"player {winner}"
+        why = f" by {payload['victory_reason']}" if payload.get("victory_reason") else ""
         header.append(
-            f"## Game over - {'you won' if payload.get('i_won') else 'you lost'} "
+            f"## Game over{why} - {'you won' if payload.get('i_won') else 'you lost'} "
             f"(winner: {beat_me})\n"
         )
+
+    vote = payload.get("removal_vote")
+    if vote:
+        target = vote.get("target_player")
+        mine = " - you have already voted" if vote.get("i_have_voted") else ""
+        header.extend([
+            f"## A vote is running to remove player {target}{mine}",
+            "Answer it with `duels_removal_vote`. A vote nobody answers keeps "
+            "the table stuck on whoever left.",
+            "",
+        ])
+
+    undo = payload.get("undo")
+    if undo and undo.get("can_request"):
+        cost = (
+            "free"
+            if undo.get("free")
+            else f"{undo['time_cost_seconds']}s off your clock"
+            if undo.get("time_cost_seconds")
+            else "allowed"
+        )
+        header.extend([f"_Your last move can be taken back ({cost}) - `duels_undo`._", ""])
 
     if payload.get("pending_prompts"):
         header.append(
