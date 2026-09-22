@@ -15,7 +15,12 @@ from ..client import DuelsError
 from ..formatting import as_json, join_lines, render
 from ..gamews import GameConnection
 from ..models import CardInstanceId, GameId, Limit, ResponseFmt, ResponseFormat, SkipTriggers
-from ..render import game_state_markdown, legal_moves_markdown, render_game_state
+from ..render import (
+    _clock,
+    game_state_markdown,
+    legal_moves_markdown,
+    render_game_state,
+)
 from ..toolkit import progress, tool_errors
 
 # Response `type` to use for each prompt `type`. Triggers are the exception:
@@ -96,6 +101,20 @@ def _check_turn_plan(steps: list) -> None:
                     f"steps[{index}] is '{kind}' and needs '{field}' "
                     "(an instanceId from duels_get_game_state)."
                 )
+
+
+# What the site's own bundle calls these. Guessed names are answered with
+# silence, so they were read out of the shipped JavaScript rather than
+# invented.
+CLAIM_ACTIONS = {
+    "timeout": ("DECLARE_VICTORY", "can_claim_timeout"),
+    "afk": ("CLAIM_AFK_VICTORY", "can_claim_afk"),
+    "pregame": ("CLAIM_PREGAME_VICTORY", "can_claim_pregame"),
+    "ping": ("PING_OPPONENT", "can_ping"),
+    "respond": ("RESPOND_TO_AFK_PING", "was_pinged"),
+}
+# Tried in this order when the caller says 'auto'.
+CLAIM_ORDER = ("timeout", "afk", "pregame")
 
 
 async def _conn(app: AppContext, game_id: str) -> GameConnection:
@@ -1327,3 +1346,94 @@ async def duels_play_turn(
         return join_lines([*head, "", game_state_markdown(p)])
 
     return render(payload, response_format, md)
+
+
+@mcp.tool(
+    name="duels_claim_victory",
+    annotations={
+        "title": "Claim a Game the Opponent Has Abandoned",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@tool_errors
+async def duels_claim_victory(
+    ctx: Context,
+    game_id: GameId,
+    kind: Annotated[
+        str,
+        Field(
+            default="auto",
+            description=(
+                "'auto' (default) claims whichever the server says is available; "
+                "'timeout' when their clock hit zero; 'afk' when they stopped "
+                "playing; 'pregame' when they never started; 'ping' nudges them "
+                "first; 'respond' answers a ping aimed at you."
+            ),
+            max_length=12,
+        ),
+    ] = "auto",
+    response_format: ResponseFmt = ResponseFormat.MARKDOWN,
+) -> str:
+    """Ends a game the other player has walked out of - by timeout, absence, or never starting.
+
+    A stalled game does not end itself. The server decides when it is
+    claimable and says so in the state's `clock`, and waiting does nothing at
+    all - an opponent whose clock hit zero stays there until somebody claims.
+
+    **kind='respond' is the defensive one.** If `clock.was_pinged` is true the
+    opponent has flagged *you* as absent; answering keeps the game, ignoring it
+    hands them the claim. Do that before anything else.
+
+    Do NOT use this to leave a game you are losing - that is duels_concede.
+
+    Examples:
+    - "They stopped playing, take the win" -> kind='auto'
+    - "Their clock ran out" -> kind='timeout'
+    - "Are they still there?" -> kind='ping'
+    - "Something says I was pinged" -> kind='respond'
+
+    Args:
+        ctx (Context): Injected by FastMCP.
+        game_id (str): Game UUID.
+        kind (str): auto | timeout | afk | pregame | ping | respond.
+        response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: The resulting state, which carries the winner once a claim lands.
+
+    Error Handling:
+        With kind='auto' and nothing claimable, it says which of the three the
+        server is refusing and whether a ping is available instead, rather than
+        sending a request that would be turned down.
+    """
+    app = app_ctx(ctx)
+    wanted = (kind or "auto").strip().lower()
+    if wanted not in CLAIM_ACTIONS and wanted != "auto":
+        raise DuelsError(
+            f"kind must be one of: auto, {', '.join(CLAIM_ACTIONS)}. Got {kind!r}."
+        )
+
+    conn = await _conn(app, game_id)
+    game = await conn.refresh()
+    clock = _clock(game) or {}
+
+    if wanted == "auto":
+        wanted = next((k for k in CLAIM_ORDER if clock.get(CLAIM_ACTIONS[k][1])), "")
+        if not wanted:
+            nudge = (
+                " A ping is available - call again with kind='ping' to start the "
+                "clock on an absence claim."
+                if clock.get("can_ping")
+                else ""
+            )
+            raise DuelsError(
+                "Nothing is claimable in this game: the server reports no timeout, "
+                "no absence and no failed start." + nudge
+            )
+
+    action, _flag = CLAIM_ACTIONS[wanted]
+    await _send(app, conn, {"type": action})
+    return await _state_reply(app, conn, response_format, f"Sent {action}.")

@@ -361,3 +361,83 @@ class TestPlayingAWholeTurn:
     async def test_an_empty_plan_says_what_one_looks_like(self, router, mcp_client):
         _server, text = await self.plan(router, mcp_client, [])
         assert text.startswith("Error:")
+
+
+class TestClaimingAStalledGame:
+    """A game nobody is playing does not end itself, and waiting does nothing.
+
+    The action names came out of the site's own JavaScript: every one of them
+    was invisible to us while the state advertised the capability.
+    """
+
+    def timed(self, **view):
+        game = games.playing()
+        return {**game, "timerView": {"serverTimestamp": 1, **view}}
+
+    async def claim(self, router, mcp_client, game, **kwargs):
+        return await with_game(
+            router, mcp_client, game, tool="duels_claim_victory", **kwargs
+        )
+
+    async def test_auto_takes_a_timeout(self, router, mcp_client):
+        server, _text = await self.claim(
+            router, mcp_client, self.timed(canDeclareVictory=True)
+        )
+        assert server.received[-1]["action"]["type"] == "DECLARE_VICTORY"
+
+    async def test_auto_takes_an_absence(self, router, mcp_client):
+        server, _text = await self.claim(
+            router, mcp_client, self.timed(canClaimAfkVictory=True)
+        )
+        assert server.received[-1]["action"]["type"] == "CLAIM_AFK_VICTORY"
+
+    async def test_auto_prefers_the_timeout(self, router, mcp_client):
+        """Both are offered at once when a clock runs out on an idle player."""
+        server, _text = await self.claim(
+            router,
+            mcp_client,
+            self.timed(canDeclareVictory=True, canClaimAfkVictory=True),
+        )
+        assert server.received[-1]["action"]["type"] == "DECLARE_VICTORY"
+
+    async def test_auto_with_nothing_to_claim_sends_nothing(self, router, mcp_client):
+        server, text = await self.claim(
+            router, mcp_client, self.timed(myTimeRemainingMs=60000)
+        )
+        assert text.startswith("Error:") and "Nothing is claimable" in text
+        assert [m for m in server.received if m.get("action")] == []
+
+    async def test_auto_points_at_the_ping_when_that_is_all_there_is(
+        self, router, mcp_client
+    ):
+        _server, text = await self.claim(
+            router, mcp_client, self.timed(canPingOpponent=True)
+        )
+        assert text.startswith("Error:") and "kind='ping'" in text
+
+    async def test_a_ping_is_sent_when_asked_for(self, router, mcp_client):
+        server, _text = await self.claim(
+            router, mcp_client, self.timed(canPingOpponent=True), kind="ping"
+        )
+        assert server.received[-1]["action"]["type"] == "PING_OPPONENT"
+
+    async def test_answering_a_ping_is_possible(self, router, mcp_client):
+        """Ignoring one hands the opponent the claim."""
+        server, _text = await self.claim(
+            router, mcp_client, self.timed(wasAfkPinged=True), kind="respond"
+        )
+        assert server.received[-1]["action"]["type"] == "RESPOND_TO_AFK_PING"
+
+    async def test_a_pregame_claim_has_its_own_name(self, router, mcp_client):
+        server, _text = await self.claim(
+            router, mcp_client, self.timed(canClaimPreGameVictory=True), kind="pregame"
+        )
+        assert server.received[-1]["action"]["type"] == "CLAIM_PREGAME_VICTORY"
+
+    async def test_an_unknown_kind_lists_the_real_ones(self, router, mcp_client):
+        _server, text = await self.claim(
+            router, mcp_client, self.timed(), kind="surrender"
+        )
+        assert text.startswith("Error:")
+        for kind in ("timeout", "afk", "pregame", "ping", "respond"):
+            assert kind in text

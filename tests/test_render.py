@@ -799,3 +799,89 @@ class TestTheWinner:
         game["status"], game["winner"] = "finished", 9
         text = game_state_markdown(await render_game_state(game, catalog))
         assert "winner: player 9" in text
+
+
+class TestWhereACharacterStands:
+    """A location changes what happens to whoever is standing on it."""
+
+    def at_corona(self):
+        game = games.playing()
+        game["myPlayer"]["field"][0]["locationInstanceId"] = games.LOCATION_CORONA
+        return game
+
+    async def test_the_location_is_named_not_just_referenced(self, catalog):
+        """The id is on the character; the name is on a card in items."""
+        text = game_state_markdown(await render_game_state(self.at_corona(), catalog))
+        assert "at Corona" in text
+
+    async def test_the_id_survives_into_the_payload(self, catalog):
+        payload = await render_game_state(self.at_corona(), catalog)
+        assert payload["me"]["field"][0]["location_instance_id"] == games.LOCATION_CORONA
+
+    async def test_a_character_standing_nowhere_says_nothing(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert "location" not in payload["me"]["field"][0]
+
+    async def test_an_unknown_location_id_is_not_invented(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["field"][0]["locationInstanceId"] = "inst-nowhere"
+        payload = await render_game_state(game, catalog)
+        assert "location" not in payload["me"]["field"][0]
+
+    async def test_having_quested_already_is_shown(self, catalog):
+        game = games.playing()
+        game["myPlayer"]["field"][0]["hasQuestedThisTurn"] = True
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "already quested" in text
+
+
+class TestAGameAlreadyWon:
+    """A stalled game does not end itself, and waiting does nothing."""
+
+    def timed(self, **view):
+        game = games.playing()
+        return {**game, "timerView": {"serverTimestamp": 1, **view}}
+
+    async def test_a_timeout_is_announced(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.timed(canDeclareVictory=True), catalog)
+        )
+        assert "claim this game right now" in text and "timeout" in text
+        assert "duels_claim_victory" in text
+
+    async def test_an_absence_is_announced(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.timed(canClaimAfkVictory=True), catalog)
+        )
+        assert "absence" in text
+
+    async def test_a_ping_is_offered_when_nothing_is_claimable_yet(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.timed(canPingOpponent=True), catalog)
+        )
+        assert "kind='ping'" in text
+        assert "claim this game right now" not in text
+
+    async def test_a_normal_game_says_none_of_it(self, catalog):
+        text = game_state_markdown(
+            await render_game_state(self.timed(myTimeRemainingMs=60000), catalog)
+        )
+        assert "claim" not in text.lower()
+
+    async def test_the_active_clock_is_identified(self, catalog):
+        """With three opponents, "the opponent's clock" names nobody."""
+        payload = await render_game_state(
+            self.timed(activePlayer=3, myTimeRemainingMs=60000), catalog
+        )
+        assert payload["clock"]["active_player"] == 3
+
+    async def test_how_many_have_run_out_is_carried(self, catalog):
+        payload = await render_game_state(
+            self.timed(opponentZeroCount=2, myTimeRemainingMs=60000), catalog
+        )
+        assert payload["clock"]["opponents_out_of_time"] == 2
+
+    async def test_being_the_one_pinged_is_visible(self, catalog):
+        """Ignoring it hands the opponent the claim."""
+        payload = await render_game_state(self.timed(wasAfkPinged=True), catalog)
+        assert payload["clock"]["was_pinged"] is True

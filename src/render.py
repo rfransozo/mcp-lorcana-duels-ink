@@ -125,6 +125,13 @@ async def _describe_card(
         out["effects"] = card["appliedEffects"]
     if card.get("cardsUnder"):
         out["cards_under"] = len(card["cardsUnder"])
+    # Being at a location changes what a character can do and what happens to
+    # it there - one board had five locations granting Evasive, +1/+1 and free
+    # movement, and none of it was visible because this id was never read.
+    if card.get("locationInstanceId"):
+        out["location_instance_id"] = card["locationInstanceId"]
+    if card.get("hasQuestedThisTurn"):
+        out["quested_this_turn"] = True
 
     if actions:
         can = [k for k, v in actions.items() if v is True and k not in NON_ACTION_FLAGS]
@@ -526,13 +533,33 @@ def _clock(game: dict) -> Optional[dict]:
     view = game.get("timerView") or {}
     mine = view.get("myTimeRemainingMs")
     theirs = view.get("opponentTimeRemainingMs")
-    if mine is None and theirs is None:
+    # The capabilities count as a clock even with no times on it: a pre-game
+    # victory is claimable before either clock has started, and hiding that
+    # because the numbers are absent loses the one thing worth knowing.
+    claimable = any(
+        view.get(k)
+        for k in ("canDeclareVictory", "canClaimAfkVictory",
+                  "canClaimPreGameVictory", "canPingOpponent", "wasAfkPinged")
+    )
+    if mine is None and theirs is None and not claimable:
         return None
     return {
         "my_ms": mine,
         "opponent_ms": theirs,
         "my_clock_running": bool(view.get("myTimerTicking")),
         "opponent_clock_running": bool(view.get("opponentTimerTicking")),
+        # With three opponents "the opponent's clock" is ambiguous; this says
+        # whose it is.
+        "active_player": view.get("activePlayer"),
+        # A game can be over without anybody moving. The server says when it
+        # is claimable and we never looked, so a table where somebody had
+        # walked away was simply waited out.
+        "opponents_out_of_time": view.get("opponentZeroCount"),
+        "can_claim_timeout": bool(view.get("canDeclareVictory")),
+        "can_claim_afk": bool(view.get("canClaimAfkVictory")),
+        "can_claim_pregame": bool(view.get("canClaimPreGameVictory")),
+        "can_ping": bool(view.get("canPingOpponent")),
+        "was_pinged": bool(view.get("wasAfkPinged")),
     }
 
 
@@ -672,6 +699,21 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         ),
     }
 
+    # A character carries the id of the location it is at; the name lives on
+    # the location card, which is in somebody's items. Resolve it once here so
+    # the card line can just print it.
+    place = {
+        card["instance_id"]: card["card"]
+        for seat in [payload["me"], *opponents]
+        for card in seat.get("items") or []
+        if card.get("instance_id") and card.get("card")
+    }
+    for seat in [payload["me"], *opponents]:
+        for card in seat.get("field") or []:
+            where = place.get(card.get("location_instance_id"))
+            if where:
+                card["location"] = where
+
     if game.get("winner") is not None:
         payload["winner"] = game["winner"]
         payload["i_won"] = game["winner"] == viewing_as
@@ -731,6 +773,10 @@ def _card_line(entry: dict, show_actions: bool = True, seen: Optional[set] = Non
         flags.append("not inkable")
     if entry.get("cards_under"):
         flags.append(f"{entry['cards_under']} under")
+    if entry.get("location"):
+        flags.append(f"at {entry['location']}")
+    if entry.get("quested_this_turn"):
+        flags.append("already quested")
     for effect in entry.get("effects") or []:
         # A buff already applied to this character. The engine only computes
         # the resulting strength as effectiveStrength, and only when a
@@ -866,6 +912,28 @@ def game_state_markdown(payload: dict) -> str:
         elif clock.get("opponent_clock_running"):
             line += " - opponent's clock is running"
         header.extend([line, ""])
+
+        claims = [
+            name
+            for key, name in (
+                ("can_claim_timeout", "timeout"),
+                ("can_claim_afk", "absence"),
+                ("can_claim_pregame", "never starting"),
+            )
+            if clock.get(key)
+        ]
+        if claims:
+            header.extend([
+                f"**You can claim this game right now** ({', '.join(claims)}) - "
+                "`duels_claim_victory`. Waiting it out does nothing.",
+                "",
+            ])
+        elif clock.get("can_ping"):
+            header.extend([
+                "_The opponent looks idle; `duels_claim_victory` with kind='ping' "
+                "starts the clock on claiming it._",
+                "",
+            ])
 
     if payload.get("winner") is not None:
         winner = payload["winner"]

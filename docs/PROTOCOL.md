@@ -330,6 +330,48 @@ in `opponents[]` whose number is 4.
 `shiftTargetInstanceId` set to the board character being shifted onto. There is
 no separate SHIFT action.
 
+## Stalling, absence and undo
+
+A stalled game does not end itself. `timerView` carries nine fields beyond the
+two clocks, and every one of them was invisible while the state advertised it:
+
+```json
+{"activePlayer": 3, "opponentZeroCount": 1,
+ "canDeclareVictory": true, "canClaimAfkVictory": false,
+ "canClaimPreGameVictory": false, "canPingOpponent": true,
+ "wasAfkPinged": false, "afkResponseExhausted": false,
+ "opponentLastGameActionAt": 1790036586107}
+```
+
+`activePlayer` matters at a table: with three opponents, "the opponent's
+clock" names nobody.
+
+The action names are not guessable and were read out of the site's own
+JavaScript (a Vite build, `/assets/*.js`; `game-engine-*.js` holds most of it):
+
+| capability | action |
+|---|---|
+| `canDeclareVictory` | `DECLARE_VICTORY` |
+| `canClaimAfkVictory` | `CLAIM_AFK_VICTORY` |
+| `canClaimPreGameVictory` | `CLAIM_PREGAME_VICTORY` |
+| `canPingOpponent` | `PING_OPPONENT` |
+| `wasAfkPinged` | `RESPOND_TO_AFK_PING` - **ignoring it hands them the claim** |
+
+The same bundle names two more families we do not use yet: undo
+(`REQUEST_UNDO`, `RESPOND_TO_UNDO`, `CANCEL_UNDO`, `CHOICE_UNDO`, `FREE_UNDO`,
+with `canRequestUndo` / `allowFreeUndo` / `undoTimeCost` in the state) and the
+multiplayer removal vote (`CALL_REMOVAL_VOTE`, `CANCEL_REMOVAL_VOTE`,
+`RESPOND_TO_REMOVAL_VOTE`). There is also `QUICK_CHAT`.
+
+## Locations
+
+A character at a location carries `locationInstanceId`; the location itself is
+a card in that player's `items`, and the name only exists there. One board held
+five locations granting Evasive, +1/+1 and free movement to whoever stood on
+them, and none of it was visible because the id was never read. Characters also
+carry `hasQuestedThisTurn`, `usedAbilitiesThisTurn`, `lastDamageSource` and
+`lastDamageWasChallenge`.
+
 ## Game log
 
 ```json
