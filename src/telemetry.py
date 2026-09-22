@@ -37,7 +37,7 @@ TOP_KEYS = {
     "opponentHasPendingPrompts", "victoryReason", "promptSourceCard",
     "canRequestUndo", "allowFreeUndo", "undoTimeCost", "nextUndoHasRevealedInfo",
     "canUndoChoice", "canCancelInProgressAbility", "canRewindAbilityChoice",
-    "undoDeclineLimitReached", "removalVoteCalled",
+    "undoDeclineLimitReached", "removalVoteCalled", "isScenario",
 }
 CARD_KEYS = {
     "definitionId", "instanceId", "damage", "exerted", "justPlayed",

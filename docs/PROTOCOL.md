@@ -474,18 +474,58 @@ Spawning takes the **catalog** id (`cardId: "10-16"`), not `definitionId` and
 not an instance id. Zones are `hand`, `inkwell`, `field`, `items`, `discard`
 and `deck`.
 
-### What a Coconut playground does and does not prove
+### A playground holds the Coconut but does not grant its ability
 
 It **does** put a Coconut in play for each side, from the first state, before
-the mulligan - confirmed by reading it back through our own tools.
+the mulligan - read back through our own tools.
 
-`availableActions.cards[<coconut instanceId>]` is `{}`. That is not evidence of
-anything broken: a Coconut whose text reads "Whenever you play a ..." triggers,
-and a triggered ability never appears among a card's available actions. What
-remains untested is whether such a trigger fires - which needs the ink and the
-associated card to meet its condition, not a fresh board.
+It does **not** grant the ability, and that was tested rather than assumed.
+`coconut-004` is Stitch - Rock Star: *"Once during your turn, you may play a
+character with cost 2 or less for free."* With a cost-2 character in hand and
+**zero** available ink, the wire itself said:
+
+```json
+"cards": {
+  "<hand card>": {"canPlay": false, "playBlockedReason": "Need 2 ink", ...},
+  "<coconut-004>": {}
+}
+```
+
+Nothing on the Coconut, and the free play not even considered. That is not our
+renderer filtering: the raw frame carries no move we drop. The whole state
+mentions a coconut in exactly three places - `myPlayer.coconutCard`,
+`opponent.coconutCard`, `opponents[n].coconutCard` - and nowhere else. There is
+no `coconutAbilitySpent`, no lock, no per-turn counter; the bundle's
+`coconutAbilitySpent` is a locale string, not a field. So there is no flag we
+are failing to read.
+
+The likely reason, unproven: **a playground reports `isScenario: true`**, and a
+scenario appears not to run the format's own engine. The renderer now says so
+in the header, because a sandbox that silently withholds an ability otherwise
+reads as a broken game.
+
+The consequence for testing: a playground can prove a Coconut is **present**
+and can exercise everything the normal tools do. It cannot exercise the
+format's ability. That still needs a real Coconut table.
 
 Playground results are not games: they do not count, rank or appear in history.
+
+## Variants
+
+The client carries the whole table, so these are the real numbers rather than
+inferred ones:
+
+| id | hand | lore to win | deck out | starting ink | OTD ink drops |
+|---|---|---|---|---|---|
+| `standard` | 7 | 20 | lose | 0 | 0 |
+| `pack_rush` | 5 | 15 | **recycle** | 2 | 0 |
+| `coconut` | 7 | **25** | lose | 0 | 0 |
+| `ink_drop` | 7 | 20 | lose | 0 | **1** |
+
+`ink_drop` was not on our list: the player going second starts with one free
+ink drop. The site's own API docs call it an experiment, 1v1 constructed only,
+and not combinable with Coconut. `deckOutBehavior: "recycle"` means Pack Rush
+does not lose on an empty deck - it reshuffles.
 
 ## One socket per player
 

@@ -1063,6 +1063,28 @@ class TestACoconutGameWithoutCoconuts:
         assert "coconuts_in_play" not in payload
 
 
+class TestScenario:
+    """A playground is a scenario, and a scenario is not a game.
+
+    It holds the Coconut on the board but does not grant its ability: the
+    wire sends `availableActions.cards[<coconut>] = {}` while a cost-2
+    character in hand still reports `playBlockedReason: "Need 2 ink"`, even
+    though the Coconut reads "you may play a character with cost 2 or less
+    for free". Saying so keeps the sandbox from reading as a broken game.
+    """
+
+    async def test_a_scenario_is_announced(self, catalog):
+        game = games.coconut_table(players=2)
+        game["isScenario"] = True
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "scenario" in text
+        assert "format abilities may not be granted" in text
+
+    async def test_a_real_game_is_not_called_a_scenario(self, catalog):
+        text = game_state_markdown(await render_game_state(games.playing(), catalog))
+        assert "scenario" not in text
+
+
 class TestTelemetry:
     """Finding unread fields by watching a game you are playing does not work.
 

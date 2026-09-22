@@ -742,6 +742,11 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "my_turn": viewing_as is not None and viewing_as == current,
         "state_version": game.get("stateVersion"),
         "is_bot_game": game.get("isBotGame"),
+        # A playground is a scenario, and a scenario does not grant the
+        # format's own abilities: a Coconut sits on the board with an empty
+        # availableActions entry while a cost-2 character in hand still
+        # reports "Need 2 ink". Worth saying, or the sandbox reads as a bug.
+        "is_scenario": game.get("isScenario"),
         "clock": _clock(game),
         "undo": _undo(game),
         "removal_vote": _removal_vote(game),
@@ -996,11 +1001,14 @@ def game_state_markdown(payload: dict) -> str:
     # - it just makes the whole lore race read as closer than it is.
     goal = f" - first to {payload['lore_to_win']} lore" if payload.get("lore_to_win") else ""
     variant = f" - {payload['game_variant']}" if payload.get("game_variant") else ""
+    sandbox = " - scenario (format abilities may not be granted)" if payload.get(
+        "is_scenario"
+    ) else ""
     you = "**You** (ELIMINATED)" if me.get("eliminated") else "**You**"
     header = [
         f"# Game {payload.get('game_id')}",
         f"**{payload.get('status')}** - turn {payload.get('turn_number')} - {turn}"
-        f"{variant}{goal}",
+        f"{variant}{goal}{sandbox}",
         "",
         "| | Lore | Hand | Deck | Ink | Discard |",
         "|---|---|---|---|---|---|",
