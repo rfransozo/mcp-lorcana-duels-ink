@@ -298,6 +298,28 @@ class TestTableSettings:
             assert action in text
 
 
+class TestStartingTheGame:
+    """The one action in this file that was wrong the whole time.
+
+    `START_GAME` reads perfectly and is refused as "Invalid table action". The
+    table stayed in `assembling` afterwards, which looks exactly like waiting
+    for another player, so nothing ever surfaced it - it took diffing every
+    action type we send against the ones the site's bundle actually sends.
+    """
+
+    async def test_start_sends_start_table(self, router, authed_mcp_client):
+        routes(router)
+        await call_text(
+            authed_mcp_client,
+            "duels_configure_table",
+            table_id=TABLE_ID,
+            action="start",
+        )
+        body = sent(router)
+        assert b"START_TABLE" in body
+        assert b"START_GAME" not in body
+
+
 class TestTheClockIsAnnounced:
     """Two games were lost on the clock without a single bad play."""
 

@@ -728,7 +728,10 @@ async def duels_configure_table(
         "set_undo": "UPDATE_SETTINGS",
         "make_public": "UPDATE_SETTINGS",
         "make_private": "UPDATE_SETTINGS",
-        "start": "START_GAME",
+        # START_GAME is refused as "Invalid table action" - the site has
+        # always sent START_TABLE. Nothing caught it because the table
+        # stayed in `assembling` and simply looked like it was waiting.
+        "start": "START_TABLE",
         "cancel": "CANCEL_TABLE",
     }
     key = action.strip().lower()

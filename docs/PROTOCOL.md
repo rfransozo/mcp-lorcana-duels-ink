@@ -446,7 +446,7 @@ status of `None` and a table that looks empty rather than unreachable.
 | `ADD_BOT_SEAT` | | |
 | `KICK_SEAT` | `{seatIndex}` | also how a bot is removed |
 | `UPDATE_SETTINGS` | `{config: {...}}` | partial patch |
-| `START_GAME` | | |
+| `START_TABLE` | | **not** `START_GAME`, which is refused as *"Invalid table action"* |
 | `CANCEL_TABLE` | | |
 
 `SET_READY` carries its value - there is no `SET_UNREADY`, and sending the
