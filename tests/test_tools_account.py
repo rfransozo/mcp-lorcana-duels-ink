@@ -105,6 +105,85 @@ class TestInvites:
 
 
 class TestMatchHistory:
+    # The shape /api/me/match-history really sends - every key as seen on
+    # 2026-09-23, with names and ids made up. The formatter used to read
+    # opponentName, finishedAt and id, which this endpoint has never sent,
+    # and printed "vs ?" and "None" for every game. The test it replaced
+    # passed, because it was written from the same guess.
+    RANKED_LOSS = {
+        "game_id": "g-1",
+        "match_id": None,
+        "match_format": "bo1",
+        "match_game_number": None,
+        "mode": "matchmaking",
+        "queue_id": "core-bo1",
+        "queue_name": "Core Set 13 BO1",
+        "ranked": True,
+        "season_id": None,
+        "season_name": "Core BO1 - Set 13",
+        "started_at": "2026-09-23T19:31:58.402Z",
+        "ended_at": "2026-09-23T19:42:34.423Z",
+        "duration_seconds": 636,
+        "turns": 12,
+        "result": "loss",
+        "end_reason": "lore",
+        "your_player": 1,
+        "went_first": False,
+        "your_lore": 6,
+        "opp_lore": 21,
+        "mmr_before": 798,
+        "mmr_after": 792,
+        "mmr_delta": -6,
+        "is_placement": False,
+        "placement_number": None,
+        "your_user_id": "u-me",
+        "your_deck_id": "starter-set-9-standout-headliners",
+        "your_deck_colors": "Emerald/Ruby",
+        "your_decklist": [{"cardId": "9-96", "count": 3}, {"cardId": "9-133", "count": 2}],
+        "opp_display_name": "Ariel",
+        "opp_guest": False,
+        "opp_is_bot": False,
+        "opp_deck_colors": "Amethyst/Steel",
+        "replay_id": "r-1",
+        "replay_filename": "g-1_p1.replay.gz",
+        "replay_url": "https://duels.ink/r/r-1",
+        "gamelog_id": "g-1",
+        "gamelog_filename": "g-1.logs.gz",
+        "gamelog_url": "https://duels.ink/g/g-1",
+    }
+    QUICK_PLAY_LOSS = {
+        **RANKED_LOSS,
+        "game_id": "g-2",
+        "queue_id": "quick-play",
+        "queue_name": "Quick Play: Core BO1",
+        "ranked": False,
+        "season_name": "Quick Play: Core BO1",
+        "your_lore": 15,
+        "mmr_before": None,
+        "mmr_after": None,
+        "mmr_delta": None,
+        "opp_display_name": "Ursula",
+    }
+    ABANDONED_BOT_GAME = {
+        **QUICK_PLAY_LOSS,
+        "game_id": "g-3",
+        "mode": "bot",
+        "queue_id": None,
+        "queue_name": None,
+        "season_name": None,
+        "result": "abandoned",
+        "end_reason": "abandoned",
+        "your_lore": 0,
+        "opp_lore": 0,
+        "opp_display_name": "Bot (Normal)",
+        "opp_is_bot": True,
+        "replay_id": None,
+    }
+
+    async def history(self, router, client, *games) -> str:
+        router.json_on("/api/me/match-history", {"games": list(games)})
+        return await call_text(client, "duels_get_match_history")
+
     async def test_needs_a_cookie(self, mcp_client):
         text = await call_text(mcp_client, "duels_get_match_history")
         assert text.startswith("Error:")
@@ -114,32 +193,64 @@ class TestMatchHistory:
         text = await call_text(authed_mcp_client, "duels_get_match_history")
         assert "Play a ranked or table game first" in text
 
-    async def test_result_and_opponent_fall_back_across_spellings(
+    async def test_a_ranked_game_reads_in_full(self, router, authed_mcp_client):
+        text = await self.history(router, authed_mcp_client, self.RANKED_LOSS)
+        assert "**loss** 6-21 vs Ariel" in text
+        assert "ended by lore" in text and "Core Set 13 BO1" in text
+        assert "MMR 798 -> 792 (-6)" in text
+        assert "2026-09-23T19:31:58.402Z" in text
+        assert "`g-1`" in text
+        assert "vs ?" not in text and "None" not in text
+
+    async def test_an_unranked_game_names_its_queue_and_no_rating(
         self, router, authed_mcp_client
     ):
-        router.json_on(
-            "/api/me/match-history",
-            {
-                "games": [
-                    {"id": "g-1", "result": "win", "opponentName": "Ariel", "finishedAt": "d1"},
-                    {"gameId": "g-2", "outcome": "loss", "opponent": "Ursula", "createdAt": "d2"},
-                ]
-            },
-        )
-        text = await call_text(authed_mcp_client, "duels_get_match_history")
-        assert "**win** vs Ariel" in text and "**loss** vs Ursula" in text
-        assert "g-1" in text and "g-2" in text
+        text = await self.history(router, authed_mcp_client, self.QUICK_PLAY_LOSS)
+        assert "**loss** 15-21 vs Ursula" in text and "Quick Play: Core BO1" in text
+        assert "MMR" not in text and "None" not in text
+
+    async def test_an_abandoned_bot_game_keeps_its_zero_score(self, router, authed_mcp_client):
+        """Lore is 0 in an abandoned game, and a bot or table game has no
+        queue - only a mode. The site's bot already says it is one."""
+        text = await self.history(router, authed_mcp_client, self.ABANDONED_BOT_GAME)
+        assert "**abandoned** 0-0 vs Bot (Normal) - ended by abandoned - bot -" in text
+        assert "(bot)" not in text and "None" not in text
+
+    async def test_a_bot_is_flagged_when_its_name_does_not_say_so(
+        self, router, authed_mcp_client
+    ):
+        bot = {**self.ABANDONED_BOT_GAME, "opp_display_name": "Merlin"}
+        text = await self.history(router, authed_mcp_client, bot)
+        assert "vs Merlin (bot)" in text
+
+    async def test_a_rating_gain_carries_its_sign(self, router, authed_mcp_client):
+        win = {
+            **self.RANKED_LOSS,
+            "result": "win",
+            "your_lore": 20,
+            "opp_lore": 14,
+            "mmr_before": 792,
+            "mmr_after": 804,
+            "mmr_delta": 12,
+        }
+        text = await self.history(router, authed_mcp_client, win)
+        assert "**win** 20-14" in text and "MMR 792 -> 804 (+12)" in text
+
+    async def test_a_sparse_row_prints_no_none(self, router, authed_mcp_client):
+        """What broke before was a missing key turning into "None"."""
+        text = await self.history(router, authed_mcp_client, {"result": "win"})
+        assert "**win** vs ?" in text and "None" not in text
 
     async def test_the_cursor_is_handed_back_ready_to_use(self, router, authed_mcp_client):
         """Pagination is useless if the caller has to guess the argument."""
         router.json_on(
-            "/api/me/match-history", {"games": [{"id": "g-1"}], "next_cursor": "abc|def"}
+            "/api/me/match-history", {"games": [{"game_id": "g-1"}], "next_cursor": "abc|def"}
         )
         text = await call_text(authed_mcp_client, "duels_get_match_history")
         assert "cursor='abc|def'" in text
 
     async def test_a_cursor_is_forwarded_to_the_api(self, router, authed_mcp_client):
-        router.json_on("/api/me/match-history", {"games": [{"id": "g-1"}]})
+        router.json_on("/api/me/match-history", {"games": [{"game_id": "g-1"}]})
         await call_text(authed_mcp_client, "duels_get_match_history", cursor="abc|def")
         assert "cursor=abc" in str(router.calls[-1].url)
 

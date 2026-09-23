@@ -11,6 +11,41 @@ from ..models import Limit, ResponseFmt, ResponseFormat
 from ..toolkit import tool_errors
 
 
+def _game_line(g: dict) -> str:
+    """One finished game as a bullet: result and score, opponent, how it ended,
+    where, the rating change, when, and the id to hand to duels_get_replay.
+
+    The keys are the ones /api/me/match-history sends. This used to read
+    opponentName, finishedAt and id - names the endpoint has never used - and
+    printed "vs ?" and "None" for every game while the JSON beside it was
+    complete.
+    """
+    head = f"**{g.get('result') or '?'}**"
+    # Lore is 0 in an abandoned game, so presence is tested, not truthiness.
+    if g.get("your_lore") is not None and g.get("opp_lore") is not None:
+        head += f" {g['your_lore']}-{g['opp_lore']}"
+    opponent = g.get("opp_display_name") or "?"
+    # The site's own bot is already called "Bot (Normal)".
+    if g.get("opp_is_bot") and "bot" not in opponent.lower():
+        opponent += " (bot)"
+    parts = [f"{head} vs {opponent}"]
+    if g.get("end_reason"):
+        parts.append(f"ended by {g['end_reason']}")
+    # A bot or table game has no queue, only a mode.
+    if g.get("queue_name") or g.get("mode"):
+        parts.append(g.get("queue_name") or g.get("mode"))
+    # Only a ranked game carries these; anything else sends all three as null.
+    before, after, delta = g.get("mmr_before"), g.get("mmr_after"), g.get("mmr_delta")
+    if None not in (before, after, delta):
+        parts.append(f"MMR {before} -> {after} ({delta:+})")
+    if g.get("started_at"):
+        parts.append(g["started_at"])
+    line = "- " + " - ".join(parts)
+    if g.get("game_id"):
+        line += f"\n  `{g['game_id']}`"
+    return line
+
+
 @mcp.tool(
     name="duels_get_match_history",
     annotations={
@@ -57,9 +92,11 @@ async def duels_get_match_history(
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
-        str: {"count": int, "games": [...], "next_cursor": str | null}. Game
-        fields mirror what Duels.ink reports, typically including the game id,
-        opponent, result and timestamp.
+        str: {"count": int, "games": [...], "next_cursor": str | null}. Each
+        game is passed through as Duels.ink sends it: game_id, result,
+        end_reason, your_lore and opp_lore, opp_display_name and opp_is_bot,
+        mode and queue_name, ranked with mmr_before/mmr_after/mmr_delta,
+        started_at, replay_id and your_deck_id among others.
     """
     app = app_ctx(ctx)
     app.client.require_auth("Reading match history")
@@ -78,11 +115,7 @@ async def duels_get_match_history(
 
     def md(p: dict) -> str:
         lines = [f"# Match history ({p['count']})", ""]
-        for g in p["games"]:
-            result = g.get("result") or g.get("outcome") or "?"
-            opponent = g.get("opponentName") or g.get("opponent") or "?"
-            when = g.get("finishedAt") or g.get("createdAt") or ""
-            lines.append(f"- **{result}** vs {opponent} - {when}\n  `{g.get('id') or g.get('gameId')}`")
+        lines += [_game_line(g) for g in p["games"]]
         if p["next_cursor"]:
             lines += ["", f"_More available - pass `cursor='{p['next_cursor']}'`._"]
         return join_lines(lines)
