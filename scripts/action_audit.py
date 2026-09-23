@@ -50,13 +50,18 @@ async def theirs() -> set[str]:
     A Vite build: the HTML names the entry chunk and the entry imports the
     rest, so both are read. Only `{type:"..."}` counts - a bare string might be
     a log event, and FREE_UNDO is exactly that trap.
+
+    The entry is the chunk the page's `<script>` tag runs. It used to be
+    picked as whichever `index-` chunk sorted first, until a second, smaller
+    one appeared and sorted ahead: the lobby chunk dropped out of reach, and
+    all nine table actions were reported as invented while the site still
+    sent every one of them.
     """
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         home = await client.get(BASE)
         srcs = set(re.findall(r'"(/assets/[^"]+\.js)"', home.text))
-        entry = sorted(s for s in srcs if "/index-" in s)
-        if entry:
-            js = (await client.get(BASE + entry[0])).text
+        for entry in re.findall(r'<script[^>]*\bsrc="(/assets/[^"]+\.js)"', home.text):
+            js = (await client.get(BASE + entry)).text
             srcs |= {"/assets/" + n for n in re.findall(r'"\./([^"]+\.js)"', js)}
 
         sent: set[str] = set()
