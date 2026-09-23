@@ -30,6 +30,9 @@ from ..toolkit import progress, tool_errors
 # How long to let the server's own state push catch up before rendering.
 # Short on purpose: it is a settle, not a wait.
 STATE_SETTLE_SECONDS = 0.6
+# How long, after END_TURN is accepted, to wait for the state that shows it.
+# The clock is no longer ours by then, so this only ever costs latency.
+TURN_PASS_SECONDS = 3.0
 
 PROMPT_RESPONSE_TYPES = {
     "boolean": "boolean",
@@ -176,6 +179,44 @@ async def _state_reply(
         return f"{headline}\n\n{body}" if headline else body
 
     return render(payload, response_format, md)
+
+
+def _turn_settled(game: Optional[dict]) -> bool:
+    """Whether a state is one END_TURN can leave behind, not the one before it.
+
+    The server acknowledges END_TURN, then pushes a game_log, then the state.
+    Any push wakes a waiter, so waiting for "an update" could end on the log
+    with the cached state still the ended turn: "Played 4 of 4 steps: ...,
+    end", and under it "YOUR TURN" with "End your turn" the only move - twice
+    in one ranked game. Waiting for what the update means rules the log out.
+
+    Before END_TURN it was our turn with nothing pending - the server refuses
+    to end a turn otherwise - so any of these is the new state: the turn
+    passed, the game ended, an end-of-turn ability is asking us something, or
+    the table is waiting on an opponent's answer.
+    """
+    if not isinstance(game, dict):
+        return False
+    if game.get("winner") is not None or game.get("status") in ("finished", "complete", "ended"):
+        return True
+    if game.get("currentPlayer") != game.get("viewingAs"):
+        return True
+    if game.get("pendingPrompts"):
+        return True
+    return bool(game.get("opponentHasPendingPrompts") or game.get("waitingForOpponent"))
+
+
+async def _await_turn_end(conn: GameConnection) -> bool:
+    """Wait for the state that follows END_TURN. False if it never arrived."""
+    return await conn.wait_for_update(timeout=TURN_PASS_SECONDS, predicate=_turn_settled)
+
+
+# Said instead of letting a state from before END_TURN pass for the current one.
+TURN_END_UNSEEN = (
+    "END_TURN was accepted, but the state that follows it had not arrived yet, "
+    "so what is shown below may still be the turn that just ended. Do not end "
+    "it again - duels_wait_for_my_turn returns at once if it really is your turn."
+)
 
 
 async def _send(app: AppContext, conn: GameConnection, action: dict) -> None:
@@ -910,7 +951,9 @@ async def duels_end_turn(
             "expectedCurrentPlayer": game.get("currentPlayer"),
         }
     )
-    return await _state_reply(app, conn, response_format, "Turn ended.")
+    seen = await _await_turn_end(conn)
+    headline = "Turn ended." if seen else f"**Not confirmed:** {TURN_END_UNSEEN}"
+    return await _state_reply(app, conn, response_format, headline)
 
 
 # =================================================================
@@ -1387,7 +1430,9 @@ async def duels_play_turn(
 
     Returns:
         str: {"done": [...], "remaining": [...], "stopped_because": str | null}
-        followed by the resulting state.
+        followed by the resulting state. After an 'end' it waits a moment for
+        the server to hand the turn over, and "turn_end_seen": false says the
+        state shown may still be the turn that just ended.
 
     Error Handling:
         A malformed plan is refused before anything is sent, naming the step
@@ -1399,6 +1444,8 @@ async def duels_play_turn(
 
     done: list[str] = []
     stopped: Optional[str] = None
+    # None until an END_TURN goes out; then whether its state was seen.
+    turn_end_seen: Optional[bool] = None
     index = 0
     for index, step in enumerate(steps):
         game = await conn.refresh()
@@ -1408,12 +1455,15 @@ async def duels_play_turn(
                 "then call duels_play_turn again with the remaining steps"
             )
             break
+        action = _turn_action(step, game)
         try:
-            await _send(app, conn, _turn_action(step, game))
+            await _send(app, conn, action)
         except DuelsError as refusal:
             stopped = str(refusal)
             break
         done.append(f"{step['do']} {step.get('card', '')}".strip())
+        if action["type"] == "END_TURN":
+            turn_end_seen = await _await_turn_end(conn)
     else:
         index = len(steps)
 
@@ -1424,9 +1474,13 @@ async def duels_play_turn(
     payload["done"] = done
     payload["remaining"] = remaining
     payload["stopped_because"] = stopped
+    if turn_end_seen is not None:
+        payload["turn_end_seen"] = turn_end_seen
 
     def md(p: dict) -> str:
         head = [f"_Played {len(done)} of {len(steps)} steps: {', '.join(done) or 'none'}._"]
+        if turn_end_seen is False:
+            head += ["", f"**Not confirmed:** {TURN_END_UNSEEN}"]
         if stopped:
             head.append("")
             head.append(f"**Stopped:** {stopped}")

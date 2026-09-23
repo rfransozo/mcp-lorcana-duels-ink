@@ -678,3 +678,78 @@ class TestTheStateWeShowIsTheStateAfter:
         # The fake bumps stateVersion on every action; seeing the bump proves
         # the render waited for the push rather than using the cached state.
         assert payload["state_version"] > games.playing()["stateVersion"]
+
+    async def end_turn(self, router, mcp_client, tool, *, as_json=False, steps=None, **server):
+        """End the turn with `tool` against a server scripted by `server`."""
+        async with FakeGameServer(games.playing(), **server) as fake:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token", {"token": "t", "wsUrl": fake.url}
+            )
+            kwargs = {"steps": steps or [{"do": "end"}]} if tool == "duels_play_turn" else {}
+            call = call_json if as_json else call_text
+            return await call(mcp_client, tool, game_id=games.GAME_ID, **kwargs)
+
+    @pytest.mark.parametrize("tool", ["duels_play_turn", "duels_end_turn"])
+    async def test_a_log_ahead_of_the_state_is_not_the_turn_ending(
+        self, router, mcp_client, tool
+    ):
+        """Seen twice in one ranked game: "Played 4 of 4 steps: ..., end", and
+        under it "YOUR TURN" with "End your turn" the only move. The server
+        acknowledged, sent the log, then the state - the log woke the wait,
+        and the render used the turn that had just ended."""
+        text = await self.end_turn(
+            router, mcp_client, tool, log_first=True, update_delay=1.0
+        )
+        assert "opponent's turn" in text
+        assert "YOUR TURN" not in text and "Not confirmed" not in text
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            games.with_prompt(prompts.BOOLEAN),
+            games.finished(winner=1),
+            games.playing(opponentHasPendingPrompts=True),
+        ],
+        ids=["an-end-of-turn-prompt", "the-game-ended", "waiting-on-their-answer"],
+    )
+    async def test_a_turn_that_does_not_pass_can_still_have_ended(
+        self, router, mcp_client, monkeypatch, outcome
+    ):
+        """An end-of-turn ability can ask something first, the game can end on
+        it, or the table can wait on the opponent. Holding out for the turn to
+        pass regardless would spend the whole wait, then doubt a true state."""
+        monkeypatch.setattr("src.tools.ingame.TURN_PASS_SECONDS", 0.5)
+        text = await self.end_turn(
+            router, mcp_client, "duels_play_turn", after_end_turn=outcome
+        )
+        assert "Not confirmed" not in text
+
+    @pytest.mark.parametrize("tool", ["duels_play_turn", "duels_end_turn"])
+    async def test_a_state_that_never_comes_is_said_not_passed_off(
+        self, router, mcp_client, monkeypatch, tool
+    ):
+        """What arrived is shown, but not as the turn still being ours."""
+        monkeypatch.setattr("src.tools.ingame.TURN_PASS_SECONDS", 0.3)
+        text = await self.end_turn(
+            router, mcp_client, tool, after_end_turn=games.playing()
+        )
+        assert "Not confirmed" in text and "Do not end it again" in text
+
+    @pytest.mark.parametrize(
+        "steps, after, seen",
+        [
+            ([{"do": "end"}], None, True),
+            ([{"do": "end"}], games.playing(), False),
+            ([{"do": "quest", "card": games.FIELD_ELSA}], None, None),
+        ],
+        ids=["handed-over", "never-seen", "no-end-in-the-plan"],
+    )
+    async def test_the_json_says_whether_the_turn_end_was_seen(
+        self, router, mcp_client, monkeypatch, steps, after, seen
+    ):
+        monkeypatch.setattr("src.tools.ingame.TURN_PASS_SECONDS", 0.3)
+        payload = await self.end_turn(
+            router, mcp_client, "duels_play_turn", as_json=True, steps=steps,
+            after_end_turn=after,
+        )
+        assert payload.get("turn_end_seen") is seen

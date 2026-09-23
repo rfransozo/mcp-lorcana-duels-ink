@@ -33,6 +33,8 @@ class FakeGameServer:
         never_ack: bool = False,
         ack_key: str = "success",
         update_delay: float = 0.0,
+        log_first: bool = False,
+        after_end_turn: dict | None = None,
     ) -> None:
         self.game = game or games.playing()
         self.accept = accept
@@ -46,6 +48,12 @@ class FakeGameServer:
         # The real server acknowledges first and pushes the new state a moment
         # later; this reproduces that gap.
         self.update_delay = update_delay
+        # ...and a game_log can land inside that gap. It wakes anyone waiting
+        # for "an update" as surely as the state does.
+        self.log_first = log_first
+        # What END_TURN leaves behind. The real server hands the turn over;
+        # a test can hand back another outcome instead.
+        self.after_end_turn = after_end_turn
         # Pushed right after init, the way the real server backfills history
         # on connect.
         self.logs = logs or []
@@ -78,6 +86,19 @@ class FakeGameServer:
             await ws.close()
         self._sockets.clear()
 
+    def _next_state(self, action: dict) -> dict:
+        version = self.game.get("stateVersion", 0) + 1
+        if action.get("type") != "END_TURN":
+            return {**self.game, "stateVersion": version}
+        if self.after_end_turn is not None:
+            return {**self.after_end_turn, "stateVersion": version}
+        return {
+            **self.game,
+            "stateVersion": version,
+            "currentPlayer": 2 if self.game.get("currentPlayer") == 1 else 1,
+            "turnNumber": self.game.get("turnNumber", 0) + 1,
+        }
+
     async def _handle(self, websocket) -> None:
         self.connections += 1
         self._sockets.append(websocket)
@@ -109,7 +130,13 @@ class FakeGameServer:
                         json.dumps({"type": "action_result", self.ack_key: True,
                                     "requestId": message.get("requestId")})
                     )
-                    self.game = {**self.game, "stateVersion": self.game.get("stateVersion", 0) + 1}
+                    self.game = self._next_state(message.get("action") or {})
+                    if self.log_first:
+                        await websocket.send(json.dumps({
+                            "type": "game_log",
+                            "logs": [{"id": f"log-{len(self.received)}", "type": "TURN_END"}],
+                            "fromIndex": len(self.logs),
+                        }))
                     if self.update_delay:
                         await asyncio.sleep(self.update_delay)
                     await websocket.send(json.dumps({"type": "game_update", "game": self.game}))
