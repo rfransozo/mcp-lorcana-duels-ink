@@ -515,6 +515,7 @@ So the format's engine works. What divides the pool is the **kind** of ability:
 |---|---|---|
 | `coconut-020` Belle & Beast | "Whenever ... readies, draw a card" | yes, every time |
 | `coconut-023` Aladdin & Genie | "Whenever you draw ... gain 2 lore" | yes, won the game |
+| `coconut-012` Moana - Curious Explorer | "you **may ink an additional card**" while a Moana, Heihei or Pua is in play | yes, every turn |
 | `coconut-004` Stitch - Rock Star | "Once during your turn, you **may play** ... for free" | never offered |
 
 A **triggered** Coconut resolves by itself and needs nothing from us. An
@@ -525,9 +526,22 @@ is refused with *"Card does not have this ability."* How the site's own client
 reaches it, if it can, is still unknown - the bundle has no `COCONUT` action
 name anywhere.
 
-Practical consequence: a Coconut deck whose card triggers plays fine through
-these tools; one that has to be *used* does not, and `coconut-004` is the one
-we own.
+The Moana Coconut is a third kind - a **permission** that bends a rule - and
+it arrives through fields we already read: with a Heihei in play,
+`remainingInkActions` went back to 1 after the turn's first ink, and a second
+`duels_ink_card` went through. Nothing needed changing to use it.
+
+Practical consequence: a Coconut deck whose card triggers or permits plays fine
+through these tools; one that has to be *used* does not, and `coconut-004` is
+the one we own.
+
+A hint that this is the site's gap rather than ours: in the same four-player
+game an opponent playing through the site's own UI held **eight** items with
+`coconut-008` Nick Wilde ("banish 4 of your items to gain 4 lore") and never
+used it, and another held `coconut-007` Mufasa ("pay 5 to ink the top 2 cards")
+without using it either. A person can simply choose not to, so this is
+circumstantial - but not one activated Coconut has been used by anyone in two
+games.
 
 Playground results are not games: they do not count, rank or appear in history.
 
@@ -553,12 +567,25 @@ does not lose on an empty deck - it reshuffles.
 Found by `src/telemetry.py` in one ranked four-player game. They are listed
 here because each was invisible in a way that looked like nothing being wrong.
 
-**`removalVoteCall`** - the vote to eject a player who stopped responding, and
-the undo vote that rides with it. We read `removalVoteCalled`, a guess with a
-trailing "d" that the site has never sent, so **eight** real votes in a single
-game were never surfaced. The vote is timed, which makes not seeing it a silent
-abstention. Only the outer key is confirmed; the renderer hands back the raw
-object when its inner names do not match, rather than an empty shell.
+**`removalVoteCall`** - the key is right, and this paragraph first described it
+wrongly, as a running vote. What the wire sends is:
+
+```json
+{"targetPlayer": 3, "targetName": "Flower Select", "availableAt": 1790180358167}
+```
+
+It names **whoever is acting** and the moment a vote against them **could be
+called** - an eligibility timer, present on nearly every turn of a four-player
+game. Read as a vote, it put "Answer it" on every turn, and answering was
+refused because nothing was running. The renderer now stays quiet until
+`availableAt` passes (against `timerView.serverTimestamp`), then says a vote
+*can be called*. A real running vote has never been seen; that path keeps its
+old guesses and hands back the raw object when they do not match.
+`removalVoteTargets` rides alongside it (71 sightings) with a shape nobody has
+inspected, so it is passed through as sent.
+
+The undo vote the UI showed is something else, and has not been found on the
+wire yet.
 
 **`select_modal`** - a prompt type meaning "choose one": an opponent to target,
 or one of a card's two modes. There was no branch for it, so the fallback sent
@@ -580,6 +607,40 @@ Conditions we could not evaluate without it.
 **`cardBadges`** on a prompt - the lore each target is worth, which is exactly
 the number the choice turns on. It was on the "unimplemented" list and won a
 lore in the game that found it.
+
+**`select_numeric` answers under `value`**, like a boolean - not
+`numericValue`, which the engine refused with `Invalid prompt response`. Found
+on Rapunzel - Gifted with Healing ("how much damage to remove"); every numeric
+prompt before it had been sent the wrong key.
+
+**Inking from the discard** (Moana - Curious Explorer) is the ordinary
+`INK_CARD` with the discard card's `cardInstanceId`. The wire flags it twice -
+`availableActions.canInkFromDiscard`, and `isDiscardInkSource` on Moana
+herself. The second is a property of hers, not a move; mapped as a capability
+it had become an `<ACTION TYPE>` placeholder.
+
+**`revealedCards`** holds the cards an effect lets you *look at* - Besties,
+Assemble!, Gaston - Intellectual Powerhouse, Develop Your Brain. It is not
+`revealedCardsThisTurn`, so every such prompt used to name nothing.
+
+**A blocked turn.** During your own turn the table can wait on someone else -
+You Have Forgotten Me asks every opponent to discard. `opponentHasPendingPrompts`
+(or `waitingForOpponent`) says so, and `canEndTurn` stays false until it
+clears. `duels_wait_for_my_turn` only checked whose turn it was, so it returned
+at once and left the caller polling.
+
+**`yesDisabled`** on a boolean prompt - Ursula's Trickery offers "discard a
+card" to a player with an empty hand, and marks that side unavailable.
+
+**Sing restrictions** - `activeSingRestrictions`, `opponentSingRestrictions` and
+a player's `singRestrictions`, from Ursula - Sea Witch Queen ("other characters
+can't exert to sing songs"). Never seen with a value we could inspect, so they
+are passed through as sent.
+
+**Coconut names** ship with the server in `src/coconuts.json`, refreshed from
+the client bundle by `scripts/refresh_coconuts.py`. A Coconut used to render
+as a bare `coconut-018` - the only card on the table whose rules nobody could
+read.
 
 ## One socket per player
 

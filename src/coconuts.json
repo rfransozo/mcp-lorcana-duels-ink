@@ -1,0 +1,233 @@
+{
+  "coconut-001": {
+    "name": "Scar - Finally King",
+    "colors": [
+      "steel"
+    ],
+    "text": "During your turn, you pay 1 {I} less for the first Ally character you play.",
+    "associated_card": "Scar - Finally King",
+    "max_copies": 4
+  },
+  "coconut-002": {
+    "name": "Ariel - Spectacular Singer",
+    "colors": [
+      "amber"
+    ],
+    "text": "Whenever a Princess character of yours sings a song, gain lore equal to her {L}.",
+    "associated_card": "Ariel - Spectacular Singer",
+    "max_copies": 4
+  },
+  "coconut-003": {
+    "name": "Winnie the Pooh - Hunny Wizard",
+    "colors": [
+      "amethyst"
+    ],
+    "text": "Whenever you play a character without an ability, you may pay 1 {I} to draw a card.",
+    "associated_card": "Winnie the Pooh - Hunny Wizard",
+    "max_copies": 4
+  },
+  "coconut-004": {
+    "name": "Stitch - Rock Star",
+    "colors": [
+      "amber"
+    ],
+    "text": "Once during your turn, you may play a character with cost 2 or less for free. If that character was named Lilo or Stitch, chosen character gets +1 {L} this turn.",
+    "associated_card": "Stitch - Rock Star",
+    "max_copies": 4
+  },
+  "coconut-005": {
+    "name": "Ursula - Deceiver of All",
+    "colors": [
+      "emerald"
+    ],
+    "text": "Your characters count as having +1 cost for singing songs. Your characters named Ursula count as having +2 cost instead.",
+    "associated_card": "Ursula - Deceiver of All",
+    "max_copies": 4
+  },
+  "coconut-006": {
+    "name": "Mickey Mouse - Brave Little Tailor",
+    "colors": [
+      "ruby"
+    ],
+    "text": "Mickey Mouse character cards in your hand, deck, and discard gain Shift 2 {I}.",
+    "associated_card": "Mickey Mouse - Brave Little Tailor",
+    "max_copies": 4
+  },
+  "coconut-007": {
+    "name": "Mufasa - Ruler of Pride Rock",
+    "colors": [
+      "sapphire"
+    ],
+    "text": "Once during your turn, you may pay 5 {I} to put the top 2 cards of your deck into your inkwell facedown and exerted.",
+    "associated_card": "Mufasa - Ruler of Pride Rock",
+    "max_copies": 4
+  },
+  "coconut-008": {
+    "name": "Nick Wilde - Wily Fox",
+    "colors": [
+      "sapphire"
+    ],
+    "text": "You can have up to 4 copies of an item card named Pawpsicle in your deck.\\n\\nOnce during your turn, you may banish 4 of your items. If you do, gain 4 lore.",
+    "associated_card": "Nick Wilde - Wily Fox",
+    "max_copies": 4
+  },
+  "coconut-009": {
+    "name": "Snow White - Merry as the Morning",
+    "colors": [
+      "amethyst"
+    ],
+    "text": "Once per game during your turn, you may reveal your hand. If you have a Snow White and 7 or more Seven Dwarfs character cards with different names among the cards in your hand, in your discard, and in play, your characters get +2 {L} for the rest of the game.",
+    "associated_card": "Snow White - Merry as the Morning",
+    "max_copies": 4
+  },
+  "coconut-010": {
+    "name": "Donald Duck - Fred Honeywell",
+    "colors": [
+      "emerald"
+    ],
+    "text": "You pay 1 {I} less to use Boost abilities and to play characters or locations with Boost.",
+    "associated_card": "Donald Duck - Fred Honeywell",
+    "max_copies": 4
+  },
+  "coconut-011": {
+    "name": "Mr. Incredible - Super Strong",
+    "colors": [
+      "ruby"
+    ],
+    "text": "Whenever you play a Super character, they gain Rush this turn and you may exert chosen opposing character with less {S} than them.",
+    "associated_card": "Mr. Incredible - Super Strong",
+    "max_copies": 4
+  },
+  "coconut-012": {
+    "name": "Moana - Curious Explorer",
+    "colors": [
+      "sapphire"
+    ],
+    "text": "During your turn, if you have a Moana, Heihei, or Pua character in play, you may ink an additional card.",
+    "associated_card": "Moana - Curious Explorer",
+    "max_copies": 4
+  },
+  "coconut-013": {
+    "name": "John Silver - Greedy Treasure Seeker",
+    "colors": [
+      "steel"
+    ],
+    "text": "Each of your locations gains Resist +1 for each character there.",
+    "associated_card": "John Silver - Greedy Treasure Seeker",
+    "max_copies": 4
+  },
+  "coconut-014": {
+    "name": "Robin Hood - Sneaky Sleuth",
+    "colors": [
+      "emerald"
+    ],
+    "text": "At the start of your first turn, you may play an item card named Robin's Bow from your collection for free.\\n\\nWhenever you play a character named Robin Hood, deal 1 damage to chosen opposing character or location.",
+    "associated_card": "Robin Hood - Sneaky Sleuth",
+    "max_copies": 4
+  },
+  "coconut-015": {
+    "name": "Tinker Bell - Giant Fairy",
+    "colors": [
+      "steel"
+    ],
+    "text": "Whenever one of your other abilities or actions deals damage to an opposing character, deal 1 damage to that character.",
+    "associated_card": "Tinker Bell - Giant Fairy",
+    "max_copies": 4
+  },
+  "coconut-016": {
+    "name": "Sisu - Emboldened Warrior",
+    "colors": [
+      "ruby"
+    ],
+    "text": "All characters with more {S} than each opposing character can quest the turn they're played.",
+    "associated_card": "Sisu - Emboldened Warrior",
+    "max_copies": 4
+  },
+  "coconut-017": {
+    "name": "Pocahontas - Peacekeeper",
+    "colors": [
+      "amber"
+    ],
+    "text": "Once during your turn, you may choose a character. Until the start of your next turn, they get +1 {L} and can't challenge and must quest if able.",
+    "associated_card": "Pocahontas - Peacekeeper",
+    "max_copies": 4
+  },
+  "coconut-018": {
+    "name": "Dumbo - Ninth Wonder of the Universe",
+    "colors": [
+      "amethyst"
+    ],
+    "text": "You may use the {E} abilities of your characters the turn they're played.",
+    "associated_card": "Dumbo - Ninth Wonder of the Universe",
+    "max_copies": 4
+  },
+  "coconut-019": {
+    "name": "Woody & Buzz Lightyear - Best Buddies",
+    "colors": [
+      "amber",
+      "emerald"
+    ],
+    "text": "Once during your turn, you may pay 1 {I} less for the next Toy character you play this turn. If you do and you have a character named Woody and a character named Buzz Lightyear in play, draw a card.",
+    "associated_card": "Woody & Buzz Lightyear - Best Buddies",
+    "max_copies": 4
+  },
+  "coconut-020": {
+    "name": "Belle & Beast - Certain as the Sun",
+    "colors": [
+      "ruby",
+      "sapphire"
+    ],
+    "text": "Whenever one of your characters with cost 5 or more readies, draw a card.",
+    "associated_card": "Belle & Beast - Certain as the Sun",
+    "max_copies": 4
+  },
+  "coconut-021": {
+    "name": "Peter Pan & Tinker Bell - Fast Friends",
+    "colors": [
+      "amethyst",
+      "ruby"
+    ],
+    "text": "Once during your turn, you may give chosen character Evasive until the start of your next turn. If they already had Evasive, they get +1 {L} until the start of your next turn.",
+    "associated_card": "Peter Pan & Tinker Bell - Fast Friends",
+    "max_copies": 4
+  },
+  "coconut-022": {
+    "name": "The Madrigal Family - Every Generation",
+    "colors": [
+      "amber",
+      "sapphire"
+    ],
+    "text": "During your turn, whenever you remove 1 or more damage from one of your characters, you may ready them. They can't quest or challenge for the rest of this turn.",
+    "associated_card": "The Madrigal Family - Every Generation",
+    "max_copies": 4
+  },
+  "coconut-023": {
+    "name": "Aladdin & Genie - Mischievous Pals",
+    "colors": [
+      "amethyst",
+      "emerald"
+    ],
+    "text": "Whenever you draw a card during your turn, if it's the third card you drew this turn, gain 2 lore.",
+    "associated_card": "Aladdin & Genie - Mischievous Pals",
+    "max_copies": 4
+  },
+  "coconut-024": {
+    "name": "The Vine - Towering Stalk",
+    "colors": [
+      "steel"
+    ],
+    "text": "Once during your turn, for each Floodborn character you have in play, you may pay 1 {I} less for the next Floodborn character you play this turn.",
+    "associated_card": "The Vine - Towering Stalk",
+    "max_copies": 4
+  },
+  "coconut-025": {
+    "name": "Darkwing Duck & Launchpad - St. Canard's Finest",
+    "colors": [
+      "sapphire",
+      "steel"
+    ],
+    "text": "During your turn, whenever an opposing character is banished in a challenge, gain 1 lore. If they were a Villain character, gain 3 lore instead.",
+    "associated_card": "Darkwing Duck & Launchpad - St. Canard's Finest",
+    "max_copies": 4
+  }
+}

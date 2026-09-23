@@ -28,6 +28,7 @@ PLAYER_KEYS = {
     "hand", "field", "items", "inkwell", "discard", "deckCount", "lore",
     "inkDrops", "handCount", "coconutCard", "eliminated", "name",
     "playerNumber", "seat", "player", "revealedCardsThisTurn", "revealedHand",
+    "revealedCards", "singRestrictions",
 }
 TOP_KEYS = {
     "id", "status", "turnNumber", "viewingAs", "currentPlayer", "stateVersion",
@@ -38,7 +39,8 @@ TOP_KEYS = {
     "canRequestUndo", "allowFreeUndo", "undoTimeCost", "nextUndoHasRevealedInfo",
     "canUndoChoice", "canCancelInProgressAbility", "canRewindAbilityChoice",
     "undoDeclineLimitReached", "removalVoteCall", "isScenario",
-    "turnGateState",
+    "turnGateState", "removalVoteTargets", "waitingForOpponent",
+    "activeSingRestrictions", "opponentSingRestrictions",
 }
 CARD_KEYS = {
     "definitionId", "instanceId", "damage", "exerted", "justPlayed",
@@ -51,7 +53,7 @@ PROMPT_KEYS = {
     "options", "cards", "cardInstanceIds", "minSelect", "maxSelect",
     "resolvingTriggerId", "validTargets", "zoneGroups", "nonSelectableCardIds",
     "sourceCardInstanceId", "sourceAbility", "params", "intent", "canDecline",
-    "destinationLabel",
+    "destinationLabel", "yesDisabled", "noDisabled",
 }
 
 

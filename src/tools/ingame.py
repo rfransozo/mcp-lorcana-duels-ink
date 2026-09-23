@@ -548,7 +548,17 @@ async def duels_wait_for_my_turn(
             mulligan = game.get("mulliganState") or {}
             return bool(mulligan.get("canSubmit")) and not mulligan.get("myDone")
 
-        return game.get("viewingAs") == game.get("currentPlayer")
+        if game.get("viewingAs") != game.get("currentPlayer"):
+            return False
+        # Your turn, but the table can be blocked on someone else's answer -
+        # the discards You Have Forgotten Me asks every opponent for, Hades'
+        # offer. Nothing happens until it arrives, and returning here left
+        # the caller polling by hand. The wire says so; canEndTurn is the proof
+        # that nothing is left for us to do meanwhile.
+        blocked = game.get("opponentHasPendingPrompts") or game.get("waitingForOpponent")
+        if blocked and not (game.get("availableActions") or {}).get("canEndTurn"):
+            return False
+        return True
 
     await progress(ctx, 0.1, "Waiting for the opponent...")
     satisfied = await conn.wait_for_update(timeout=float(timeout_seconds), predicate=ready)
@@ -1054,7 +1064,16 @@ async def duels_respond_to_prompt(
                 "This is a boolean prompt - pass choice='yes' or choice='no'. "
                 f"yes means {prompt.get('yesLabel')!r}, no means {prompt.get('noLabel')!r}."
             )
-        response.update({"type": "boolean", "value": normalised in ("yes", "true")})
+        wants_yes = normalised in ("yes", "true")
+        # A side can be unavailable - "discard a card" with an empty hand - and
+        # the prompt says so with yesDisabled. Sending it anyway only earns a
+        # refusal, so name the answer that is left.
+        if prompt.get("yesDisabled" if wants_yes else "noDisabled"):
+            raise DuelsError(
+                f"'{'yes' if wants_yes else 'no'}' is disabled on this prompt - "
+                f"answer choice='{'no' if wants_yes else 'yes'}'."
+            )
+        response.update({"type": "boolean", "value": wants_yes})
 
     elif ptype == "select_target":
         # minSelect 0 means the prompt can be declined, and declining is
@@ -1133,7 +1152,10 @@ async def duels_respond_to_prompt(
             raise DuelsError(
                 "This is a select_numeric prompt - pass numeric_value. " + _prompt_options(prompt)
             )
-        response.update({"type": "select_numeric", "numericValue": numeric_value})
+        # `value`, the same key a boolean answers under. numericValue was a
+        # guess that the engine refused with "Invalid prompt response" - seen
+        # on Rapunzel - Gifted with Healing's "how much damage to remove".
+        response.update({"type": "select_numeric", "value": numeric_value})
 
     else:
         # Unknown prompt type: pass through whatever was supplied rather than
@@ -1143,9 +1165,11 @@ async def duels_respond_to_prompt(
             response["targetInstanceIds"] = target_instance_ids
         if selected_card_ids:
             response["cardInstanceIds"] = selected_card_ids
+        # Both known shapes answer under `value` - a boolean's yes/no and a
+        # select_numeric's number - so an unseen type gets the same key.
         if numeric_value is not None:
-            response["numericValue"] = numeric_value
-        if normalised in ("yes", "no"):
+            response["value"] = numeric_value
+        elif normalised in ("yes", "no"):
             response["value"] = normalised == "yes"
 
     await _send(app, conn, {"type": "RESPOND_TO_PROMPT", "response": response})
@@ -1683,7 +1707,10 @@ async def duels_removal_vote(
             )
         body["targetPlayer"] = target_player
     elif wanted in ("accept", "decline"):
-        if not _removal_vote(game):
+        vote = _removal_vote(game)
+        # The wire always names whoever is acting, with the time a vote
+        # against them would open. That is not a vote to answer.
+        if not vote or vote.get("kind") == "eligible":
             raise DuelsError(
                 "There is no vote running in this game, so there is nothing to "
                 "answer. Start one with action='call'."

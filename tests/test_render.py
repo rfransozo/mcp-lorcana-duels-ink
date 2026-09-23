@@ -1136,6 +1136,124 @@ class TestWhatAFourPlayerCoconutFound:
         assert payload["turn_counters"]["charactersBanishedThisTurn"] == {"1": 2}
 
 
+class TestWhatTheMoanaGameFound:
+    """Seven things a four-player Coconut game with the Moana deck showed."""
+
+    # --- removalVoteCall is an eligibility timer ------------------------
+    ELIGIBLE = {"targetPlayer": 3, "targetName": "Flower", "availableAt": 5_000}
+
+    def eligible(self, now: int) -> dict:
+        game = games.coconut_table()
+        game["removalVoteCall"] = dict(self.ELIGIBLE)
+        game["timerView"] = {"serverTimestamp": now}
+        return game
+
+    async def test_an_eligibility_timer_is_not_a_vote(self, catalog):
+        """The wire names whoever is acting and when a vote could open.
+
+        Read as a running vote it announced "Answer it" on every turn of a
+        four-player game, and answering was refused - there was nothing to
+        answer.
+        """
+        payload = await render_game_state(self.eligible(now=1_000), catalog)
+        assert payload["removal_vote"]["kind"] == "eligible"
+        assert payload["removal_vote"]["available_now"] is False
+        text = game_state_markdown(payload)
+        assert "vote is running" not in text
+        assert "gone quiet" not in text
+
+    async def test_an_open_window_says_a_vote_can_be_called(self, catalog):
+        payload = await render_game_state(self.eligible(now=9_000), catalog)
+        assert payload["removal_vote"]["available_now"] is True
+        text = game_state_markdown(payload)
+        assert "Flower has gone quiet" in text and "action='call'" in text
+        assert "vote is running" not in text
+
+    async def test_a_real_vote_still_reads_as_one(self, catalog):
+        game = games.coconut_table()
+        game["removalVoteCall"] = {"targetPlayer": 2, "votesFor": 1, "votesNeeded": 2}
+        payload = await render_game_state(game, catalog)
+        assert payload["removal_vote"]["kind"] == "running"
+        assert "vote is running" in game_state_markdown(payload)
+
+    # --- ink from the discard -------------------------------------------
+    def inking_from_discard(self, can_ink: bool = True) -> dict:
+        game = games.playing()
+        game["availableActions"]["canInkFromDiscard"] = True
+        game["availableActions"]["canInk"] = can_ink
+        return game
+
+    async def test_ink_from_the_discard_is_offered(self, catalog):
+        """Moana: "you can ink cards from your discard". The move is the
+        ordinary INK_CARD with the discard card's id, and nothing offered it."""
+        payload = await render_game_state(self.inking_from_discard(), catalog)
+        offered = {
+            m["args"]["card_instance_id"]
+            for m in payload["legal_moves"]
+            if m["tool"] == "duels_ink_card"
+        }
+        assert "disc-3" in offered          # 12-77 is inkable
+        assert "disc-1" not in offered      # 10-103 is not
+
+    async def test_ink_from_the_discard_needs_an_ink_action_left(self, catalog):
+        payload = await render_game_state(self.inking_from_discard(can_ink=False), catalog)
+        assert not [
+            m for m in payload["legal_moves"]
+            if m["tool"] == "duels_ink_card"
+            and m["args"]["card_instance_id"].startswith("disc-")
+        ]
+
+    async def test_moanas_property_is_not_a_move(self, catalog):
+        """isDiscardInkSource describes Moana; it once became an
+        "<ACTION TYPE>" placeholder the agent could not fill."""
+        game = games.playing()
+        game["availableActions"]["cards"][games.FIELD_ELSA]["isDiscardInkSource"] = True
+        payload = await render_game_state(game, catalog)
+        assert not [
+            m for m in payload["legal_moves"]
+            if m["args"].get("action_type") == "<ACTION TYPE>"
+        ]
+
+    # --- cards you are looking at ---------------------------------------
+    async def test_the_cards_you_are_looking_at_are_named(self, catalog):
+        """Besties, Assemble! and Gaston look at the top of the deck. Those
+        cards travel in revealedCards, so every such prompt named nothing."""
+        game = games.with_prompt({
+            "id": "p-look", "player": 1, "type": "select_card",
+            "message": "useAbility", "cardInstanceIds": ["look-1"],
+            "minSelect": 0, "maxSelect": 1,
+        })
+        game["myPlayer"]["revealedCards"] = [games.card("look-1", "10-71")]
+        payload = await render_game_state(game, catalog)
+        assert payload["me"]["looking_at"][0]["instance_id"] == "look-1"
+        assert "look-1" in payload["prompt_cards"]
+        assert "look-1" not in payload["prompt_cards_unknown"]
+        assert "Cards you are looking at" in game_state_markdown(payload)
+
+    # --- the Coconut has a name -----------------------------------------
+    async def test_a_coconut_is_named_from_the_pool(self, catalog):
+        """/api/cards does not serve Coconuts; they rendered as bare ids."""
+        payload = await render_game_state(games.coconut_table(), catalog)
+        mine = payload["me"]["coconut"][0]
+        assert mine["card"] == "Mr. Incredible - Super Strong"
+        assert mine.get("text")
+        assert "**Mr. Incredible - Super Strong**" in game_state_markdown(payload)
+
+    # --- sing restrictions ----------------------------------------------
+    async def test_sing_restrictions_are_handed_over(self, catalog):
+        """Ursula - Sea Witch Queen: other characters can't exert to sing.
+        The shape has never been seen with a value, so it is passed through."""
+        game = games.playing()
+        game["activeSingRestrictions"] = [{"source": "ursula"}]
+        payload = await render_game_state(game, catalog)
+        assert payload["sing_restrictions"] == {"active": [{"source": "ursula"}]}
+        assert "Singing is restricted" in game_state_markdown(payload)
+
+    async def test_no_restriction_says_nothing(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert payload["sing_restrictions"] is None
+
+
 class TestScenario:
     """A playground is a scenario, and a scenario is not a game.
 
@@ -1151,7 +1269,10 @@ class TestScenario:
         game["isScenario"] = True
         text = game_state_markdown(await render_game_state(game, catalog))
         assert "scenario" in text
-        assert "format abilities may not be granted" in text
+        assert "nothing here counts" in text
+        # The old header blamed the sandbox for withholding Coconut abilities.
+        # A real game did the same, so saying so would be a false claim.
+        assert "format abilities" not in text
 
     async def test_a_real_game_is_not_called_a_scenario(self, catalog):
         text = game_state_markdown(await render_game_state(games.playing(), catalog))

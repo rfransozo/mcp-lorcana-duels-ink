@@ -11,9 +11,11 @@ server already decides what is legal, including a human-readable
 implement Lorcana's rules - it just picks from what is offered.
 """
 
+import time
 from typing import Any, Optional
 
 from .cards import CardCatalog
+from .coconuts import record as coconut_record
 from . import telemetry
 from .formatting import join_lines
 
@@ -55,6 +57,11 @@ NON_ACTION_FLAGS = {
     "canBeSinger",
     "hasSingTogether",
     "hasQuestAbility",
+    # Moana - Curious Explorer's "you can ink cards from your discard" - a
+    # property of hers, not a move on her. Mapped as a capability it became a
+    # "supply the matching action_type" placeholder. The real move is INK_CARD
+    # on a discard card, which _legal_moves offers from canInkFromDiscard.
+    "isDiscardInkSource",
 }
 
 
@@ -65,7 +72,11 @@ async def _describe_card(
 ) -> dict:
     """Merge a card instance with its catalog record and its legal actions."""
     definition_id = card.get("definitionId")
-    record = await catalog.get(definition_id) if definition_id else None
+    # A Coconut is not in /api/cards - asking for one is a 404, and it used to
+    # render as a bare "coconut-018". The pool ships with the server instead.
+    record = coconut_record(definition_id)
+    if record is None and definition_id:
+        record = await catalog.get(definition_id)
 
     out: dict[str, Any] = {
         "instance_id": card.get("instanceId"),
@@ -276,6 +287,7 @@ def _legal_moves(
     described_hand: list[dict],
     described_field: list[dict],
     opponent_names: Optional[dict] = None,
+    described_discard: Optional[list[dict]] = None,
 ) -> list[dict]:
     """Build the concrete list of callable moves for the current position.
 
@@ -488,6 +500,21 @@ def _legal_moves(
 
     moves.extend(_activated_moves(game_id, described_field))
 
+    # "You can ink cards from your discard" - the wire says so as
+    # canInkFromDiscard, and the move is the ordinary INK_CARD with the discard
+    # card's id. Nothing offered it, so with Moana in play the discard sat
+    # there as unused ink while the agent was told to supply an action type.
+    if available.get("canInkFromDiscard") and available.get("canInk"):
+        for entry in described_discard or []:
+            if entry.get("inkable") and entry.get("instance_id"):
+                moves.append(
+                    {
+                        "tool": "duels_ink_card",
+                        "why": f"Put this card into the inkwell from your discard: {entry['card']}",
+                        "args": {"game_id": game_id, "card_instance_id": entry["instance_id"]},
+                    }
+                )
+
     if available.get("canEndTurn"):
         moves.append(
             {
@@ -662,9 +689,32 @@ def _removal_vote(game: dict) -> Optional[dict]:
     if not called:
         return None
     if not isinstance(called, dict):
-        return {"target_player": called}
+        return {"kind": "running", "target_player": called}
+
+    # What the wire actually sends, seen live:
+    #   {"targetPlayer": 3, "targetName": "...", "availableAt": 1790180358167}
+    # It names whoever is acting and the moment a vote against them would
+    # open - an eligibility timer, not a vote. Read as a running vote it put
+    # "Answer it" on every turn of a four-player game, and answering it was
+    # refused with "no vote running" because there was none.
+    if "availableAt" in called:
+        server_now = (game.get("timerView") or {}).get("serverTimestamp")
+        if not isinstance(server_now, (int, float)):
+            server_now = time.time() * 1000
+        opens = called.get("availableAt")
+        return {
+            "kind": "eligible",
+            "target_player": called.get("targetPlayer"),
+            "target_name": called.get("targetName"),
+            "available_at": opens,
+            "available_now": isinstance(opens, (int, float)) and server_now >= opens,
+            # Seen 71 times, never with a value we could inspect - handed over
+            # as sent rather than guessed at.
+            "targets": game.get("removalVoteTargets"),
+        }
 
     vote = {
+        "kind": "running",
         "target_player": called.get("targetPlayer") or called.get("target"),
         "votes_for": called.get("votesFor") or called.get("accepted"),
         "votes_needed": called.get("votesNeeded") or called.get("required"),
@@ -673,7 +723,7 @@ def _removal_vote(game: dict) -> Optional[dict]:
     }
     # Those inner names are still guesses - only the outer key is confirmed.
     # Rather than hand back a hollow shell, say what actually arrived.
-    if not any(v for k, v in vote.items() if k != "i_have_voted"):
+    if not any(v for k, v in vote.items() if k not in ("i_have_voted", "kind")):
         vote["raw"] = called
     return vote
 
@@ -698,6 +748,22 @@ def _revealed(player: dict) -> list[dict]:
     """
     cards = player.get("revealedCardsThisTurn")
     return [c for c in cards if isinstance(c, dict)] if isinstance(cards, list) else []
+
+
+def _looking_at(player: dict) -> list[dict]:
+    """Cards only you can see right now, under an effect that looks at them.
+
+    Besties, Assemble!, Gaston - Intellectual Powerhouse and Develop Your
+    Brain look at the top of your deck and ask you to pick one. The wire keeps
+    those cards in `revealedCards` - not `revealedCardsThisTurn`, which is what
+    _revealed reads - so every such prompt arrived naming nothing and the pick
+    was made blind.
+    """
+    cards = player.get("revealedCards")
+    if not isinstance(cards, list):
+        return []
+    already = {c.get("instanceId") for c in _revealed(player)}
+    return [c for c in cards if isinstance(c, dict) and c.get("instanceId") not in already]
 
 
 def _prompt_ids(prompts: list) -> set:
@@ -735,6 +801,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
     hand = await _describe_zone(catalog, me.get("hand"), action_map)
     field = await _describe_zone(catalog, me.get("field"), action_map)
     items = await _describe_zone(catalog, me.get("items"), action_map)
+    my_discard = await _describe_zone(catalog, me.get("discard"))
 
     # One entry per opponent, so a duel and a four-player table differ only in
     # the length of this list. `or [{}]` keeps the shape when there is nobody
@@ -774,14 +841,27 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         "my_turn": viewing_as is not None and viewing_as == current,
         "state_version": game.get("stateVersion"),
         "is_bot_game": game.get("isBotGame"),
-        # A playground is a scenario, and a scenario does not grant the
-        # format's own abilities: a Coconut sits on the board with an empty
-        # availableActions entry while a cost-2 character in hand still
-        # reports "Need 2 ink". Worth saying, or the sandbox reads as a bug.
+        # A playground is a scenario: a sandbox whose results do not count.
+        # It was once blamed for withholding a Coconut's ability. A real game
+        # did the same, so the cause is the kind of Coconut - an activated one
+        # is never offered, sandbox or not.
         "is_scenario": game.get("isScenario"),
         # Counters cards read: "if a character was banished this turn", "if
         # you discarded a card this turn". Conditions we could not evaluate.
         "turn_counters": game.get("turnGateState") or None,
+        # What stops a character singing - Ursula - Sea Witch Queen's "other
+        # characters can't exert to sing songs" arrives here. Never seen with
+        # a value we could inspect, so it is passed through rather than read.
+        "sing_restrictions": {
+            k: v
+            for k, v in (
+                ("active", game.get("activeSingRestrictions")),
+                ("opponents", game.get("opponentSingRestrictions")),
+                ("mine", me.get("singRestrictions")),
+            )
+            if v
+        }
+        or None,
         "clock": _clock(game),
         "undo": _undo(game),
         "removal_vote": _removal_vote(game),
@@ -801,12 +881,13 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "hand_count": len(me.get("hand") or []),
             "deck_count": me.get("deckCount"),
             "discard_count": len(me.get("discard") or []),
-            "discard": await _describe_zone(catalog, me.get("discard")),
+            "discard": my_discard,
             "hand": hand,
             "field": field,
             "items": items,
             "coconut": await _describe_zone(catalog, _coconut_zone(me)),
             "revealed": await _describe_zone(catalog, _revealed(me)),
+            "looking_at": await _describe_zone(catalog, _looking_at(me)),
             "eliminated": bool(me.get("eliminated")),
         },
         # Kept as the first opponent so anything reading the old singular
@@ -823,6 +904,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
                 for c in [*seat["field"], *seat["items"]]
                 if c.get("instance_id") and c.get("card")
             },
+            my_discard,
         ),
     }
 
@@ -867,7 +949,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         # be made on what the cards actually are.
         named: dict[str, str] = {}
         for seat in [payload["me"], *opponents]:
-            for zone in ("hand", "field", "items", "discard", "coconut", "revealed"):
+            for zone in ("hand", "field", "items", "discard", "coconut", "revealed", "looking_at"):
                 for card in seat.get(zone) or []:
                     if card.get("instance_id") and card.get("card"):
                         named[card["instance_id"]] = card["card"]
@@ -1036,7 +1118,7 @@ def game_state_markdown(payload: dict) -> str:
     # - it just makes the whole lore race read as closer than it is.
     goal = f" - first to {payload['lore_to_win']} lore" if payload.get("lore_to_win") else ""
     variant = f" - {payload['game_variant']}" if payload.get("game_variant") else ""
-    sandbox = " - scenario (format abilities may not be granted)" if payload.get(
+    sandbox = " - scenario (a sandbox: nothing here counts)" if payload.get(
         "is_scenario"
     ) else ""
     you = "**You** (ELIMINATED)" if me.get("eliminated") else "**You**"
@@ -1116,7 +1198,20 @@ def game_state_markdown(payload: dict) -> str:
         )
 
     vote = payload.get("removal_vote")
-    if vote:
+    if vote and vote.get("kind") == "eligible":
+        # Routine: the wire always names whoever is acting, with the time a
+        # vote against them would open. Worth a line only once it has.
+        if vote.get("available_now"):
+            # Not `who`: that name is this function's seat labeller, and
+            # shadowing it broke every opponent section below.
+            idle = vote.get("target_name") or f"player {vote.get('target_player')}"
+            header.extend([
+                f"## {idle} has gone quiet - a vote to remove them can be called",
+                f"`duels_removal_vote` action='call', target_player={vote.get('target_player')}. "
+                "Only for a player who has stopped playing, never one who is thinking.",
+                "",
+            ])
+    elif vote:
         target = vote.get("target_player")
         mine = " - you have already voted" if vote.get("i_have_voted") else ""
         header.extend([
@@ -1125,6 +1220,9 @@ def game_state_markdown(payload: dict) -> str:
             "the table stuck on whoever left.",
             "",
         ])
+
+    if payload.get("sing_restrictions"):
+        header.extend(["_Singing is restricted right now - see `sing_restrictions`._", ""])
 
     undo = payload.get("undo")
     if undo and undo.get("can_request"):
@@ -1206,6 +1304,11 @@ def game_state_markdown(payload: dict) -> str:
                 )
     if me.get("hand"):
         sections.append("## Your hand\n" + "\n".join(_card_line(c, seen=seen) for c in me["hand"]))
+    if me.get("looking_at"):
+        sections.append(
+            "## Cards you are looking at\n"
+            + "\n".join(_card_line(c, show_actions=False, seen=seen) for c in me["looking_at"])
+        )
 
     # Discards last: they inform what has been spent, but nothing in them acts.
     if me.get("discard"):

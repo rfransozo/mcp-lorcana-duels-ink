@@ -99,6 +99,21 @@ class TestWaitingForYourTurn:
             router, mcp_client, games.finished()
         )
 
+    async def test_your_turn_blocked_on_an_opponent_keeps_waiting(
+        self, router, mcp_client
+    ):
+        """You Have Forgotten Me asks every opponent to discard, and the turn
+        waits on them. Returning at once left the caller polling by hand."""
+        game = games.playing(opponentHasPendingPrompts=True)
+        game["availableActions"]["canEndTurn"] = False
+        assert "Still not your turn" in await self._wait(router, mcp_client, game)
+
+    async def test_a_waiting_opponent_does_not_hold_you_when_you_can_act(
+        self, router, mcp_client
+    ):
+        game = games.playing(opponentHasPendingPrompts=True)
+        assert "Still not your turn" not in await self._wait(router, mcp_client, game)
+
     async def test_a_pending_prompt_counts_as_your_turn(self, router, mcp_client):
         assert "Still not your turn" not in await self._wait(
             router, mcp_client, games.with_prompt(prompts.BOOLEAN)
@@ -155,7 +170,27 @@ class TestNumericAndUnseenPrompts:
             router, mcp_client, prompts.SELECT_NUMERIC, numeric_value=2
         )
         assert not text.startswith("Error:")
-        assert server.received[-1]["action"]["response"]["numericValue"] == 2
+        # `value`, the key a boolean answers under too. numericValue was a
+        # guess the engine refused with "Invalid prompt response".
+        response = server.received[-1]["action"]["response"]
+        assert response["value"] == 2
+        assert "numericValue" not in response
+
+    async def test_a_disabled_answer_is_refused_with_the_one_left(
+        self, router, mcp_client
+    ):
+        """Ursula's Trickery: "discard a card" with an empty hand. The prompt
+        says so with yesDisabled; sending yes anyway only earns a refusal."""
+        prompt = {**prompts.BOOLEAN, "yesDisabled": True}
+        server, text = await answer(router, mcp_client, prompt, choice="yes")
+        assert text.startswith("Error:") and "choice='no'" in text
+        assert not [m for m in server.received if m.get("action")]
+
+    async def test_the_answer_that_is_left_goes_through(self, router, mcp_client):
+        prompt = {**prompts.BOOLEAN, "yesDisabled": True}
+        server, text = await answer(router, mcp_client, prompt, choice="no")
+        assert not text.startswith("Error:")
+        assert server.received[-1]["action"]["response"]["value"] is False
 
     async def test_a_numeric_prompt_without_one_shows_the_range(self, router, mcp_client):
         _server, text = await answer(router, mcp_client, prompts.SELECT_NUMERIC)
@@ -168,13 +203,17 @@ class TestNumericAndUnseenPrompts:
         """Refusing a shape we have not met would wedge the game on a prompt
         nobody can clear."""
         odd = {**prompts.SELECT_NUMERIC, "type": "choose_a_direction"}
-        server, text = await answer(
-            router, mcp_client, odd, numeric_value=7, choice="yes"
-        )
+        server, text = await answer(router, mcp_client, odd, numeric_value=7)
         assert not text.startswith("Error:")
         response = server.received[-1]["action"]["response"]
         assert response["type"] == "choose_a_direction"
-        assert response["numericValue"] == 7 and response["value"] is True
+        # Both known shapes answer under `value`, so an unseen one gets it too.
+        assert response["value"] == 7
+
+    async def test_an_unseen_prompt_can_take_a_yes_or_no(self, router, mcp_client):
+        odd = {**prompts.SELECT_NUMERIC, "type": "choose_a_direction"}
+        server, _text = await answer(router, mcp_client, odd, choice="yes")
+        assert server.received[-1]["action"]["response"]["value"] is True
 
     async def test_the_passthrough_carries_targets_and_cards_too(
         self, router, mcp_client
@@ -564,6 +603,18 @@ class TestRemovalVote:
             router, mcp_client, self.voting(), action="decline"
         )
         assert server.received[-1]["action"]["accept"] is False
+
+    async def test_an_eligibility_timer_is_not_a_vote_to_answer(
+        self, router, mcp_client
+    ):
+        """removalVoteCall with availableAt names whoever is acting and when
+        a vote against them could open - there is no vote to answer yet."""
+        game = games.coconut_table(
+            removalVoteCall={"targetPlayer": 3, "targetName": "Flower", "availableAt": 1}
+        )
+        server, text = await self.vote(router, mcp_client, game, action="decline")
+        assert text.startswith("Error:") and "no vote running" in text
+        assert [m for m in server.received if m.get("action")] == []
 
     async def test_answering_a_vote_nobody_called(self, router, mcp_client):
         server, text = await self.vote(router, mcp_client, action="accept")
