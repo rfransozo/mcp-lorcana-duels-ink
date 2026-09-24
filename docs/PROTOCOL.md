@@ -629,6 +629,15 @@ You Have Forgotten Me asks every opponent to discard. `opponentHasPendingPrompts
 clears. `duels_wait_for_my_turn` only checked whose turn it was, so it returned
 at once and left the caller polling.
 
+**`opponentPromptSources`** names what the table is waiting on: one entry per
+prompt another player has open, `{sourceCardInstanceId, sourceAbility,
+message}` - the three fields the site's own client reads (read out of its
+bundle, not guessed). It says which card is asking and with which ability, not
+which opponent is answering. Live, an Ink Amplifier asked its owner whether to
+ramp after I drew a second card; my quest was refused with "Waiting for
+opponent to respond" while the only explanation offered was "the server is
+still resolving something".
+
 **`yesDisabled`** on a boolean prompt - Ursula's Trickery offers "discard a
 card" to a player with an empty hand, and marks that side unavailable.
 
@@ -670,6 +679,11 @@ The names are in the state, in three places the renderer had to learn:
   which is not necessarily in any zone.
 * **`zoneGroups`** on a `select_card` prompt - the same ids split by the zone
   they came from.
+* **`targetCardInstanceId`** on a prompt - the card it puts in front of you
+  ("Play this revealed character for free?"), with **`targetCardLabel`** as
+  its caption. The label is a key into the site's `game` strings, not text:
+  `revealedCard` reads "Revealed Card", `targetedCard` "Targeted Card", and the
+  client shows a key it has no string for as it came.
 
 The site's own client builds exactly this index before it draws the dialog.
 

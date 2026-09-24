@@ -9,7 +9,7 @@ from ..app import AppContext, app_ctx, mcp
 from ..client import DuelsError
 from ..formatting import as_json, bullet, join_lines, render
 from ..models import BotDifficulty, DeckId, GameId, ResponseFmt, ResponseFormat, TableId
-from ..render import game_state_markdown, render_game_state
+from ..render import game_state_markdown, render_game_state, state_json
 from ..toolkit import tool_errors
 
 
@@ -322,7 +322,8 @@ async def duels_start_bot_game(
         )
         return head + "\n" + game_state_markdown(p["state"])
 
-    return render(payload, response_format, md)
+    return render(payload, response_format, md,
+                  json_view=lambda p: {**p, "state": state_json(p["state"])})
 
 
 @mcp.tool(

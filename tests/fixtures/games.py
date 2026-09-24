@@ -205,6 +205,78 @@ def coconut_table(
     return game
 
 
+AMPLIFIER = "inst-opp4-amplifier"
+
+
+def waiting_on_an_answer(*, sources: Optional[list] = None, **overrides: Any) -> dict:
+    """My turn at a four-player table, held up by somebody else's answer.
+
+    Seen live: an Ink Amplifier asked its owner whether to ramp after I drew a
+    second card, and my quest was refused with "Waiting for opponent to
+    respond" while nothing named the card, the ability or whose it was.
+    """
+    game = coconut_table(**overrides)
+    game["opponents"][2]["items"] = [card(AMPLIFIER, "10-167")]
+    game["opponentHasPendingPrompts"] = True
+    game["opponentPromptSources"] = (
+        sources
+        if sources is not None
+        else [{"sourceCardInstanceId": AMPLIFIER, "sourceAbility": "ENERGY CAPTURE",
+               "message": "useAbility"}]
+    )
+    game["availableActions"] = stuck()["availableActions"]
+    return game
+
+
+def crowded_coconut_table(definition_ids: list[str]) -> dict:
+    """Late in a four-player game: full boards, a full hand, four long discards.
+
+    Shaped after the game whose JSON reached 104,584 characters. The cards are
+    handed round from `definition_ids`, so the same card turns up on more than
+    one board, as it does in a real game.
+    """
+    ids = iter(definition_ids * 4)
+
+    def deal(prefix: str, count: int, **extra: Any) -> list[dict]:
+        return [card(f"{prefix}-{i}", next(ids), **extra) for i in range(count)]
+
+    game = coconut_table()
+    me = game["myPlayer"]
+    me["hand"] = deal("hand", 5)
+    me["field"] = deal("field", 4)
+    me["items"] = deal("item", 1)
+    me["discard"] = deal("disc", 12)
+    targets = []
+    for seat in game["opponents"]:
+        number = seat["playerNumber"]
+        seat["field"] = deal(f"opp{number}-field", 6, exerted=True, damage=1)
+        seat["items"] = deal(f"opp{number}-item", 1)
+        seat["discard"] = deal(f"opp{number}-disc", 22)
+        seat["handCount"] = 5
+        targets += [c["instanceId"] for c in seat["field"]]
+    game["timerView"] = {"myTimeRemainingMs": 29_000, "opponentTimeRemainingMs": 120_000,
+                         "myTimerTicking": True, "opponentTimerTicking": False}
+    game["availableActions"] = {
+        "canInk": True, "canEndTurn": True, "availableInk": 7, "remainingInkActions": 1,
+        "cards": {
+            **{c["instanceId"]: {"canInk": True, "canPlay": True} for c in me["hand"]},
+            **{
+                c["instanceId"]: {
+                    "canQuest": True,
+                    "canChallenge": True,
+                    "challengeTargetInfo": [
+                        {"instanceId": t, "damageToTarget": 3, "damageToAttacker": 2,
+                         "willBanishTarget": False, "willBanishAttacker": False}
+                        for t in targets[:6]
+                    ],
+                }
+                for c in me["field"][:3]
+            },
+        },
+    }
+    return game
+
+
 def all_phases() -> dict[str, dict]:
     """Every phase, for tests that sweep across all of them."""
     from . import prompts

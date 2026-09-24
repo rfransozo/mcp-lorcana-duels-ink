@@ -11,6 +11,7 @@ server already decides what is legal, including a human-readable
 implement Lorcana's rules - it just picks from what is offered.
 """
 
+import re
 import time
 from typing import Any, Optional
 
@@ -288,6 +289,7 @@ def _legal_moves(
     described_field: list[dict],
     opponent_names: Optional[dict] = None,
     described_discard: Optional[list[dict]] = None,
+    waiting_on: Optional[list[dict]] = None,
 ) -> list[dict]:
     """Build the concrete list of callable moves for the current position.
 
@@ -528,16 +530,19 @@ def _legal_moves(
         # Nothing playable and the turn cannot be ended yet - usually an ability
         # still resolving on the server. Never hand back an empty list while the
         # game is live, or the caller has no next step to take.
-        moves.append(
-            {
-                "tool": "duels_wait_for_my_turn",
-                "why": (
-                    "Nothing is playable right now and the turn cannot be ended yet - "
-                    "the server is still resolving something. Wait, then re-read the state"
-                ),
-                "args": {"game_id": game_id},
-            }
+        why = (
+            "Nothing is playable right now and the turn cannot be ended yet - "
+            "the server is still resolving something. Wait, then re-read the state"
         )
+        if waiting_on or game.get("opponentHasPendingPrompts"):
+            # Somebody else's answer, which the wire names. Said only as
+            # "resolving something", a quest refused with "Waiting for opponent
+            # to respond" was retried with nine seconds on the clock.
+            why = (
+                f"{_waiting_text(waiting_on or [])} - nothing can be played until "
+                "they answer. Wait, then re-read the state"
+            )
+        moves.append({"tool": "duels_wait_for_my_turn", "why": why, "args": {"game_id": game_id}})
 
     return moves
 
@@ -782,10 +787,70 @@ def _prompt_ids(prompts: list) -> set:
                 found.update(
                     v for v in group.get("cardInstanceIds") or [] if isinstance(v, str)
                 )
-        source = prompt.get("sourceCardInstanceId")
-        if isinstance(source, str):
-            found.add(source)
+        # The card it came from, and the card it shows: "Play this revealed
+        # character for free?" names the revealed one only here.
+        for key in ("sourceCardInstanceId", "targetCardInstanceId"):
+            value = prompt.get(key)
+            if isinstance(value, str):
+                found.add(value)
     return found
+
+
+def _humanize(key: object) -> str:
+    """A camelCase wire key as words: 'chooseCardToDiscard' -> 'choose card to discard'.
+
+    Anything that is not a bare camelCase key is already prose and comes back
+    as sent.
+    """
+    text = str(key or "")
+    if not re.fullmatch(r"[a-z]+(?:[A-Z0-9][a-z0-9]*)*", text):
+        return text
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text).lower()
+
+
+def _waiting_on(game: dict, names: dict, owners: dict) -> list[dict]:
+    """The card and ability behind each prompt another player has open.
+
+    `opponentPromptSources` sends {sourceCardInstanceId, sourceAbility,
+    message} per prompt - the three fields the site's own client reads. Nothing
+    read it, so a quest refused with "Waiting for opponent to respond" was
+    explained only as "the server is still resolving something". It says whose
+    card is asking, not which opponent is answering, so that is all this says.
+    """
+    out = []
+    for source in game.get("opponentPromptSources") or []:
+        if not isinstance(source, dict):
+            continue
+        instance = source.get("sourceCardInstanceId")
+        out.append(
+            {
+                "card": names.get(instance),
+                "instance_id": instance,
+                "card_owner": owners.get(instance),
+                "ability": source.get("sourceAbility"),
+                "message": source.get("message"),
+            }
+        )
+    return out
+
+
+def _whose(owner: Optional[str]) -> str:
+    """ ' (Rasec's card)', ' (your card)', or nothing when the card is out of sight."""
+    if not owner:
+        return ""
+    return " (your card)" if owner == "you" else f" ({owner}'s card)"
+
+
+def _waiting_text(waiting: list[dict]) -> str:
+    """One line naming what an opponent is answering, as far as the wire says."""
+    parts = [
+        f"{entry.get('ability') or 'an ability'} on "
+        f"{entry.get('card') or 'a card this state does not show'}{_whose(entry.get('card_owner'))}"
+        for entry in waiting
+    ]
+    if not parts:
+        return "Waiting on an opponent's answer to a prompt"
+    return "Waiting on an opponent's answer to " + "; ".join(parts)
 
 
 async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
@@ -832,6 +897,28 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
                 "revealed_hand": await _describe_zone(catalog, _revealed_hand(seat)),
             }
         )
+
+    my_coconut = await _describe_zone(catalog, _coconut_zone(me))
+    my_revealed = await _describe_zone(catalog, _revealed(me))
+    my_looking_at = await _describe_zone(catalog, _looking_at(me))
+
+    # Every card the state shows, by instance: what it is and whose it is. A
+    # prompt, and a prompt somebody else is answering, name cards by id alone.
+    card_names: dict[str, str] = {}
+    card_owners: dict[str, str] = {}
+    mine = {"hand": hand, "field": field, "items": items, "discard": my_discard,
+            "coconut": my_coconut, "revealed": my_revealed, "looking_at": my_looking_at}
+    holders = [("you", mine)] + [
+        (seat.get("name") or f"player {seat.get('player_number')}", seat) for seat in opponents
+    ]
+    for owner, zones in holders:
+        for zone in ("hand", "field", "items", "discard", "coconut", "revealed",
+                     "looking_at", "revealed_hand"):
+            for entry in zones.get(zone) or []:
+                if entry.get("instance_id") and entry.get("card"):
+                    card_names[entry["instance_id"]] = entry["card"]
+                    card_owners[entry["instance_id"]] = owner
+    waiting_on = _waiting_on(game, card_names, card_owners)
 
     payload: dict[str, Any] = {
         "game_id": game.get("id"),
@@ -885,9 +972,9 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
             "hand": hand,
             "field": field,
             "items": items,
-            "coconut": await _describe_zone(catalog, _coconut_zone(me)),
-            "revealed": await _describe_zone(catalog, _revealed(me)),
-            "looking_at": await _describe_zone(catalog, _looking_at(me)),
+            "coconut": my_coconut,
+            "revealed": my_revealed,
+            "looking_at": my_looking_at,
             "eliminated": bool(me.get("eliminated")),
         },
         # Kept as the first opponent so anything reading the old singular
@@ -905,6 +992,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
                 if c.get("instance_id") and c.get("card")
             },
             my_discard,
+            waiting_on,
         ),
     }
 
@@ -947,12 +1035,7 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         # first. Every zone in the state is indexed here, including the
         # revealed cards and the card the prompt came from, so the choice can
         # be made on what the cards actually are.
-        named: dict[str, str] = {}
-        for seat in [payload["me"], *opponents]:
-            for zone in ("hand", "field", "items", "discard", "coconut", "revealed", "looking_at"):
-                for card in seat.get(zone) or []:
-                    if card.get("instance_id") and card.get("card"):
-                        named[card["instance_id"]] = card["card"]
+        named = dict(card_names)
         source = game.get("promptSourceCard")
         if isinstance(source, dict) and source.get("instanceId"):
             described = await _describe_card(catalog, source)
@@ -961,6 +1044,22 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         wanted = _prompt_ids(game["pendingPrompts"])
         payload["prompt_cards"] = {k: v for k, v in named.items() if k in wanted}
         payload["prompt_cards_unknown"] = sorted(wanted - set(named))
+        # The card a prompt puts in front of you - "Play this revealed
+        # character for free?" - and what the site labels it. The label is a
+        # key into the site's own strings, not text: `revealedCard` there reads
+        # "Revealed Card", `targetedCard` "Targeted Card", and a key it has no
+        # string for is shown as it came.
+        shown = []
+        for prompt in game["pendingPrompts"]:
+            target = prompt.get("targetCardInstanceId") if isinstance(prompt, dict) else None
+            if not isinstance(target, str):
+                continue
+            key = prompt.get("targetCardLabel")
+            label = _humanize(key).capitalize() if key else "Card shown"
+            shown.append({"prompt_id": prompt.get("id"), "label": label,
+                          "instance_id": target, "card": named.get(target)})
+        if shown:
+            payload["prompt_target_cards"] = shown
     if game.get("status") == "mulligan":
         payload["mulligan"] = game.get("mulliganState")
     if game.get("status") == "coin_toss":
@@ -974,12 +1073,66 @@ async def render_game_state(game: dict, catalog: CardCatalog) -> dict:
         payload["first_player"] = game["firstPlayer"]
     if game.get("opponentHasPendingPrompts"):
         payload["waiting_on_opponent_prompt"] = True
+    if waiting_on:
+        payload["waiting_on"] = waiting_on
     if available.get("canInkFromDiscard"):
         payload["me"]["can_ink_from_discard"] = True
     if available.get("canPlayFromDiscard"):
         payload["me"]["can_play_from_discard"] = True
 
     return payload
+
+
+# Zones whose cards act, or can be chosen. Their entries keep every field.
+LIVE_ZONES = ("hand", "field", "items", "coconut", "revealed", "looking_at", "revealed_hand")
+# What still names a discarded card once its description is gone.
+DISCARD_FIELDS = ("instance_id", "card", "definition_id")
+# The long text a card carries, sent once per definition instead of per copy.
+TEXT_FIELDS = ("text", "named_abilities")
+
+
+def state_json(payload: dict) -> dict:
+    """render_game_state's payload as response_format='json' sends it.
+
+    A four-player Coconut state reached 104,584 characters of JSON - past what
+    an MCP client shows inline, with the clock at 0:29 - while the markdown of
+    the same state fit easily. The markdown already printed each card's rules
+    text once and listed discards by name; this does the same for JSON. Rules
+    text moves to `card_text`, keyed by definition id, and a discarded card
+    keeps only what names it. Ids, legal moves, prompts, lore, ink, the clock
+    and every card's status stay where they were. The payload passed in is not
+    changed, so the markdown can still read all of it.
+    """
+    card_text: dict[str, dict] = {}
+
+    def live(entry: dict) -> dict:
+        definition_id = entry.get("definition_id")
+        text = {k: entry[k] for k in TEXT_FIELDS if entry.get(k)}
+        if definition_id and text:
+            card_text.setdefault(definition_id, text)
+        return {k: v for k, v in entry.items() if k not in TEXT_FIELDS}
+
+    def seat(zones: dict) -> dict:
+        out = dict(zones)
+        for zone in LIVE_ZONES:
+            if isinstance(zones.get(zone), list):
+                out[zone] = [live(c) for c in zones[zone]]
+        if isinstance(zones.get("discard"), list):
+            out["discard"] = [
+                {k: c[k] for k in DISCARD_FIELDS if c.get(k) is not None} for c in zones["discard"]
+            ]
+        return out
+
+    out = dict(payload)
+    if isinstance(payload.get("me"), dict):
+        out["me"] = seat(payload["me"])
+    if isinstance(payload.get("opponents"), list):
+        out["opponents"] = [seat(s) if isinstance(s, dict) else s for s in payload["opponents"]]
+    if isinstance(payload.get("opponent"), dict):
+        out["opponent"] = seat(payload["opponent"])
+    if card_text:
+        out["card_text"] = dict(sorted(card_text.items()))
+    return out
 
 
 # -----------------------------------------------------------------
@@ -1254,6 +1407,34 @@ def game_state_markdown(payload: dict) -> str:
                 f"_{len(unknown)} of the ids above are not in any zone this state "
                 "shows, so they cannot be named._\n"
             )
+        for shown in payload.get("prompt_target_cards") or []:
+            header.append(
+                f"**{shown['label']}:** {shown.get('card') or 'a card this state does not show'}"
+                f" `{shown['instance_id']}`\n"
+            )
+
+    waiting = payload.get("waiting_on") or []
+    if waiting or payload.get("waiting_on_opponent_prompt"):
+        header.append("## Waiting on an opponent's answer")
+        for entry in waiting:
+            asks = f" - prompt: {_humanize(entry['message'])}" if entry.get("message") else ""
+            where = f" `{entry['instance_id']}`" if entry.get("instance_id") else ""
+            header.append(
+                f"- **{entry.get('ability') or 'An ability'}** on "
+                f"**{entry.get('card') or 'a card this state does not show'}**"
+                f"{_whose(entry.get('card_owner'))}{asks}{where}"
+            )
+        if not waiting:
+            header.append("An opponent has a prompt open; the wire does not say which card asked.")
+        moves = payload.get("legal_moves") or []
+        if payload.get("my_turn") and all(m.get("tool") == "duels_wait_for_my_turn" for m in moves):
+            header.append(
+                "Nothing can be played until they answer - a move sent now is refused "
+                "as \"Waiting for opponent to respond\". `duels_wait_for_my_turn` waits for it."
+            )
+        # join_lines drops empty fragments, so the gap before the next section
+        # rides on this one's last line.
+        header[-1] += "\n"
 
     if payload.get("mulligan"):
         header.append(f"## Mulligan\n{payload['mulligan']}\n")

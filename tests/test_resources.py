@@ -77,6 +77,19 @@ class TestGameResources:
             assert data["game_id"] == games.GAME_ID
             assert "legal_moves" in data and "me" in data
 
+    async def test_the_state_is_the_compact_one_too(self, router, mcp_client):
+        """It says it reads like duels_get_game_state, so it sends the same JSON."""
+        async with FakeGameServer() as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token", {"token": "t", "wsUrl": server.url}
+            )
+            contents = await mcp_client.read_resource(f"duels://game/{games.GAME_ID}/state")
+        text = contents[0].text
+        assert "\n" not in text
+        data = json.loads(text)
+        assert data["card_text"]
+        assert all(set(c) == {"instance_id", "card", "definition_id"} for c in data["me"]["discard"])
+
     async def test_the_log_substitutes_card_placeholders(self, router, mcp_client):
         """A log full of {card:0} is unreadable, and the names live in a
         parallel cardRefs list."""

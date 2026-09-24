@@ -130,6 +130,19 @@ class TestBotGameLifecycle:
         assert payload["already_running"] is False
         assert payload["state"]["me"]["lore"] == 4
 
+    async def test_the_opening_state_is_the_compact_one(self, mcp_client, router, game_server):
+        """The state rides inside this envelope, so the compact view has to be
+        asked for here as well."""
+        router.json_on(
+            "/api/game/create-bot-game", {"gameId": games.GAME_ID, "sessionId": "sess-1"}
+        )
+        payload = await call_json(
+            mcp_client, "duels_start_bot_game", deck_id=deck_fixtures.DECK_ID
+        )
+        assert payload["state"]["card_text"]
+        assert all(set(c) == {"instance_id", "card", "definition_id"}
+                   for c in payload["state"]["me"]["discard"])
+
     async def test_existing_game_is_handed_back_instead_of_failing(
         self, mcp_client, router, game_server
     ):

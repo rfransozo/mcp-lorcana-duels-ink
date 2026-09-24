@@ -40,7 +40,7 @@ TOP_KEYS = {
     "canUndoChoice", "canCancelInProgressAbility", "canRewindAbilityChoice",
     "undoDeclineLimitReached", "removalVoteCall", "isScenario",
     "turnGateState", "removalVoteTargets", "waitingForOpponent",
-    "activeSingRestrictions", "opponentSingRestrictions",
+    "activeSingRestrictions", "opponentSingRestrictions", "opponentPromptSources",
 }
 CARD_KEYS = {
     "definitionId", "instanceId", "damage", "exerted", "justPlayed",
@@ -53,7 +53,8 @@ PROMPT_KEYS = {
     "options", "cards", "cardInstanceIds", "minSelect", "maxSelect",
     "resolvingTriggerId", "validTargets", "zoneGroups", "nonSelectableCardIds",
     "sourceCardInstanceId", "sourceAbility", "params", "intent", "canDecline",
-    "destinationLabel", "yesDisabled", "noDisabled",
+    "destinationLabel", "yesDisabled", "noDisabled", "targetCardInstanceId",
+    "targetCardLabel",
 }
 
 

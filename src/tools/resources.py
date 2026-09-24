@@ -8,8 +8,8 @@ from fastmcp import Context
 
 from ..app import app_ctx, mcp
 from ..cards import summarise
-from ..formatting import as_json
-from ..render import render_game_state
+from ..formatting import as_compact_json, as_json
+from ..render import render_game_state, state_json
 
 
 @mcp.resource("duels://cards/{definition_id}")
@@ -27,7 +27,7 @@ async def game_state_resource(game_id: str, ctx: Context) -> str:
     """The current state of a live game, in the same compact form as duels_get_game_state."""
     app = app_ctx(ctx)
     conn = await app.games.get(game_id, app.games.session_for(game_id))
-    return as_json(await render_game_state(await conn.refresh(), app.catalog))
+    return as_compact_json(state_json(await render_game_state(await conn.refresh(), app.catalog)))
 
 
 @mcp.resource("duels://game/{game_id}/log")

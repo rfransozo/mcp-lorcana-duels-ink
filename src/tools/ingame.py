@@ -22,6 +22,7 @@ from ..render import (
     game_state_markdown,
     legal_moves_markdown,
     render_game_state,
+    state_json,
 )
 from ..toolkit import progress, tool_errors
 
@@ -178,7 +179,7 @@ async def _state_reply(
         body = game_state_markdown(p)
         return f"{headline}\n\n{body}" if headline else body
 
-    return render(payload, response_format, md)
+    return render(payload, response_format, md, json_view=state_json)
 
 
 def _turn_settled(game: Optional[dict]) -> bool:
@@ -339,7 +340,7 @@ async def duels_get_game_state(
         response_format (ResponseFormat): 'markdown' (default) or 'json'.
 
     Returns:
-        str: In JSON mode:
+        str: In JSON mode (compact - no indentation):
         {
             "game_id": str, "status": str,          # coin_toss | mulligan | playing | finished
             "turn_number": int, "my_turn": bool,
@@ -352,16 +353,24 @@ async def duels_get_game_state(
                 "lore": int, "ink_available": int, "ink_total": int,
                 "hand_count": int, "deck_count": int, "discard_count": int,
                 "eliminated": bool,
-                "hand": [{"instance_id","card","cost","type","can":[...],"blocked":str}],
-                "field": [...], "items": [...], "coconut": [...]
+                "hand": [{"instance_id","card","definition_id","cost","type",
+                          "can":[...],"blocked":str}],
+                "field": [...], "items": [...], "coconut": [...],
+                "discard": [{"instance_id","card","definition_id"}]  # named, not described
             },
             "opponents": [                  # one entry per opponent - READ THIS ONE
                 { "name": str|null, "player_number": int|null, "eliminated": bool,
                   ... same zones, but hand_count only - their hand is hidden }
             ],
             "opponent": { ... },            # opponents[0], kept for older callers
+            "card_text": {"<definition_id>": {"text": str, "named_abilities": [...]}},
+                                            # rules text once per card, not once per copy
             "legal_moves": [{"tool": str, "why": str, "args": {...}}],
             "pending_prompts": [...],   # when a decision is waiting
+            "prompt_target_cards": [{"prompt_id","label","instance_id","card"}],
+                                            # the card a prompt shows you, e.g. "Revealed card"
+            "waiting_on": [{"card","instance_id","card_owner","ability","message"}],
+                                            # another player is answering a prompt from this card
             "winner": int, "i_won": bool    # once the game is over
         }
 
@@ -617,7 +626,7 @@ async def duels_wait_for_my_turn(
         )
         return head + game_state_markdown(p)
 
-    return render(payload, response_format, md)
+    return render(payload, response_format, md, json_view=state_json)
 
 
 # =================================================================
@@ -1432,7 +1441,9 @@ async def duels_play_turn(
         str: {"done": [...], "remaining": [...], "stopped_because": str | null}
         followed by the resulting state. After an 'end' it waits a moment for
         the server to hand the turn over, and "turn_end_seen": false says the
-        state shown may still be the turn that just ended.
+        state shown may still be the turn that just ended. A step refused
+        while another player answers a prompt says, in "stopped_because",
+        which card and ability they are answering.
 
     Error Handling:
         A malformed plan is refused before anything is sent, naming the step
@@ -1489,7 +1500,7 @@ async def duels_play_turn(
                 head.append(f"**Not taken:** {left}")
         return join_lines([*head, "", game_state_markdown(p)])
 
-    return render(payload, response_format, md)
+    return render(payload, response_format, md, json_view=state_json)
 
 
 @mcp.tool(

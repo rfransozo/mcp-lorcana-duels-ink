@@ -5,6 +5,7 @@ import json
 import pytest
 
 from src.formatting import (
+    as_compact_json,
     as_json,
     bullet,
     empty_result,
@@ -57,6 +58,24 @@ class TestRender:
 
     def test_as_json_handles_non_serialisable_values(self):
         assert "datetime" in as_json({"x": object()}) or as_json({"x": 1}) == '{\n  "x": 1\n}'
+
+    def test_json_mode_carries_no_whitespace(self):
+        """Indentation is for people. It was close to a third of a four-player
+        state that no longer fit in one reply."""
+        out = render({"a": [1, 2], "b": {"c": "d e"}}, ResponseFormat.JSON, lambda p: "")
+        assert out == '{"a":[1,2],"b":{"c":"d e"}}'
+
+    def test_a_json_view_reshapes_only_the_json(self):
+        def view(p):
+            return {"doubled": p["n"] * 2}
+
+        out = render({"n": 2}, ResponseFormat.JSON, lambda p: "", json_view=view)
+        assert json.loads(out) == {"doubled": 4}
+        md = render({"n": 2}, ResponseFormat.MARKDOWN, lambda p: f"n={p['n']}", json_view=view)
+        assert md == "n=2"
+
+    def test_compact_json_handles_non_serialisable_values(self):
+        assert "object" in as_compact_json({"x": object()})
 
 
 class TestBullet:

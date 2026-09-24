@@ -41,18 +41,33 @@ def paginate(
 
 
 def as_json(payload: Any) -> str:
-    """Serialise a payload as indented JSON."""
+    """Serialise a payload as indented JSON, for JSON shown inside markdown."""
     return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+
+
+def as_compact_json(payload: Any) -> str:
+    """Serialise a payload with no whitespace - what response_format='json' returns.
+
+    Indentation is for people reading markdown. A four-player Coconut state
+    came back as 104,584 characters, over what an MCP client shows inline with
+    the clock at 0:29, and close to a third of it was spaces and newlines.
+    """
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def render(
     payload: dict,
     response_format: ResponseFormat,
     markdown: Callable[[dict], str],
+    json_view: Optional[Callable[[dict], Any]] = None,
 ) -> str:
-    """Return either the markdown rendering or the raw JSON envelope."""
+    """Return either the markdown rendering or the JSON envelope.
+
+    `json_view` reshapes the payload for JSON only - the markdown keeps
+    reading the full one.
+    """
     if response_format == ResponseFormat.JSON:
-        return as_json(payload)
+        return as_compact_json(json_view(payload) if json_view else payload)
     return markdown(payload)
 
 

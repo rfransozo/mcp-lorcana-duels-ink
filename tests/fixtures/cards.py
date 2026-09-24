@@ -246,6 +246,41 @@ CARDS: list[dict] = [
         ),
         "imageUrl": "https://cards.duels.ink/lorcana/en/full/12-77.webp",
     },
+    {
+        # The item whose question to its owner held up a four-player table:
+        # a quest was refused with "Waiting for opponent to respond".
+        "id": "10-167",
+        "fullId": "167/204 EN 10",
+        "name": "Ink Amplifier",
+        "title": "",
+        "fullName": "Ink Amplifier",
+        "slug": "ink-amplifier",
+        "type": "item",
+        "colors": ["sapphire"],
+        "cost": 3,
+        "inkable": True,
+        "rarity": "rare",
+        "legality": ["core", "infinity"],
+        "subtypes": [],
+        "abilities": [],
+        "specialAbilities": [
+            {
+                "name": "ENERGY CAPTURE",
+                "slug": "energy-capture",
+                "effect": (
+                    "Whenever an opponent draws a card during their turn, if it's the second "
+                    "card they've drawn this turn, you may put the top card of your deck into "
+                    "your inkwell facedown and exerted."
+                ),
+            }
+        ],
+        "rulesText": (
+            "ENERGY CAPTURE Whenever an opponent draws a card during their turn, if it's the "
+            "second card they've drawn this turn, you may put the top card of your deck into "
+            "your inkwell facedown and exerted."
+        ),
+        "imageUrl": "https://cards.duels.ink/lorcana/en/full/10-167.webp",
+    },
 ]
 
 BY_ID: dict[str, dict] = {c["id"]: c for c in CARDS}
@@ -269,3 +304,54 @@ def page(cards: list[dict], limit: int, offset: int, total: int | None = None) -
 def cards_in_set(set_number: int) -> list[dict]:
     """Every fixture card belonging to one set."""
     return [c for c in CARDS if c["id"].split("-", 1)[0] == str(set_number)]
+
+
+def wordy_cards(count: int = 60, set_number: int = 90) -> list[dict]:
+    """Stand-ins the size of real cards. Not real cards: only their weight matters.
+
+    A late four-player game has well over a hundred cards in view - boards,
+    hands, items, four discards - most of them different, each carrying a few
+    hundred characters of rules text and the same text again as named
+    abilities. Built rather than copied, so the JSON budget test does not need
+    a hundred hand-verified records.
+    """
+    kinds = ("character", "character", "character", "action", "item")
+    out = []
+    for n in range(1, count + 1):
+        kind = kinds[n % len(kinds)]
+        # One named ability of ordinary length; every fifth card has two, and
+        # every third a keyword with its reminder text - as real ones do.
+        named = [{
+            "name": f"STAND-IN RULE {n}",
+            "effect": (
+                "When you play this character, if you have 2 or more other "
+                "characters in play, you may draw a card."
+            ),
+        }]
+        if n % 5 == 0:
+            named.append({
+                "name": f"SECOND RULE {n}",
+                "effect": "Chosen opposing character gets -2 {S} until the start of your next turn.",
+            })
+        card = {
+            "id": f"{set_number}-{n}",
+            "name": f"Stand-in {n}",
+            "title": "Of Realistic Length",
+            "fullName": f"Stand-in {n} - Of Realistic Length",
+            "type": kind,
+            "colors": ["amber", "sapphire"][n % 2: n % 2 + 1],
+            "cost": 1 + n % 8,
+            "inkable": n % 7 != 0,
+            "subtypes": ["Storyborn", "Hero"] if kind == "character" else [],
+            "abilities": [{"ability": "Evasive"}] if n % 3 == 0 else [],
+            "specialAbilities": named,
+            "rulesText": (
+                ("Evasive (Only characters with Evasive can challenge this character.)\n"
+                 if n % 3 == 0 else "")
+                + "\n".join(f"{a['name']} {a['effect']}" for a in named)
+            ),
+        }
+        if kind == "character":
+            card.update(strength=n % 6, willpower=1 + n % 7, lore=1 + n % 3)
+        out.append(card)
+    return out

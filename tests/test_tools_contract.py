@@ -229,6 +229,14 @@ class TestDocstrings:
             body = t.description or ""
             assert "Args:" not in body, f"{t.name}: Args leaked into the description"
 
+    def test_the_state_json_keys_are_documented(self):
+        """The Returns section is the only place an agent learns what the JSON
+        carries, so the keys added to it are named there."""
+        returns = source_docstrings()["duels_get_game_state"].split("Returns:", 1)[1]
+        for key in ("card_text", "waiting_on", "prompt_target_cards",
+                    '"discard": [{"instance_id","card","definition_id"}]'):
+            assert key in returns, key
+
     def test_source_docstrings_cover_every_exposed_tool(self):
         """Guards the AST lookup itself: a renamed module would otherwise make
         the two checks above silently pass on an empty set."""

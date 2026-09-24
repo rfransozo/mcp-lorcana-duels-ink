@@ -5,17 +5,26 @@ told it can do. Several cases below are regressions for bugs that reached the
 live site before being caught.
 """
 
+import copy
+import json
+
 import pytest
 
+from src.formatting import as_compact_json, as_json
 from src.render import (
     BOARD_CAPABILITIES,
     CAPABILITY_TOOLS,
+    DISCARD_FIELDS,
     HAND_CAPABILITIES,
+    LIVE_ZONES,
     NON_ACTION_FLAGS,
+    TEXT_FIELDS,
     game_state_markdown,
     render_game_state,
+    state_json,
 )
 from src import telemetry
+from tests.fixtures import cards as card_fixtures
 from tests.fixtures import games, prompts
 
 
@@ -1353,3 +1362,196 @@ class TestTelemetry:
         game["somethingBrandNew"] = 1
         await render_game_state(game, catalog)
         assert "somethingBrandNew" in target.read_text(encoding="utf-8")
+
+    def test_whose_prompt_and_the_card_it_shows_are_read_now(self):
+        """opponentPromptSources, targetCardLabel and targetCardInstanceId were
+        three of the surprises a four-player game recorded."""
+        game = games.waiting_on_an_answer()
+        game["pendingPrompts"] = [{"id": "p", "type": "boolean", "targetCardInstanceId": "x",
+                                   "targetCardLabel": "revealedCard"}]
+        found = telemetry.observe(game)
+        assert "opponentPromptSources" not in found.get("top", [])
+        assert not {"targetCardInstanceId", "targetCardLabel"} & set(found.get("prompt", []))
+
+
+class TestWhoTheTableIsWaitingOn:
+    """A quest refused with "Waiting for opponent to respond" was explained as
+    "the server is still resolving something", and retried with nine seconds
+    on the clock. The wire named the card and the ability all along, in
+    opponentPromptSources - read here the way the site's own client reads it.
+    """
+
+    async def test_the_card_the_ability_and_whose_card_it_is(self, catalog):
+        payload = await render_game_state(games.waiting_on_an_answer(), catalog)
+        assert payload["waiting_on"] == [{
+            "card": "Ink Amplifier",
+            "instance_id": games.AMPLIFIER,
+            "card_owner": "DRobb",
+            "ability": "ENERGY CAPTURE",
+            "message": "useAbility",
+        }]
+
+    async def test_the_only_move_says_whose_answer_it_is(self, catalog):
+        payload = await render_game_state(games.waiting_on_an_answer(), catalog)
+        (move,) = payload["legal_moves"]
+        assert move["tool"] == "duels_wait_for_my_turn"
+        assert "ENERGY CAPTURE on Ink Amplifier (DRobb's card)" in move["why"]
+        assert "resolving something" not in move["why"]
+
+    async def test_the_markdown_says_it_too(self, catalog):
+        text = game_state_markdown(await render_game_state(games.waiting_on_an_answer(), catalog))
+        section = text.split("## Waiting on an opponent's answer", 1)[1]
+        assert (
+            "**ENERGY CAPTURE** on **Ink Amplifier** (DRobb's card) - prompt: use ability"
+            in section
+        )
+        assert "Nothing can be played until they answer" in section
+
+    async def test_with_moves_left_nothing_is_called_blocked(self, catalog):
+        """The table can wait on somebody and still let you act."""
+        game = games.waiting_on_an_answer()
+        game["availableActions"] = games.base_game()["availableActions"]
+        text = game_state_markdown(await render_game_state(game, catalog))
+        assert "## Waiting on an opponent's answer" in text
+        assert "Nothing can be played until they answer" not in text
+
+    async def test_a_prompt_with_no_named_source_is_still_somebody_elses(self, catalog):
+        payload = await render_game_state(games.waiting_on_an_answer(sources=[]), catalog)
+        assert "waiting_on" not in payload
+        (move,) = payload["legal_moves"]
+        assert move["why"].startswith("Waiting on an opponent's answer to a prompt")
+        assert "the wire does not say which card asked" in game_state_markdown(payload)
+
+    async def test_a_card_out_of_sight_is_not_invented(self, catalog):
+        game = games.waiting_on_an_answer(
+            sources=[{"sourceCardInstanceId": "inst-hidden", "sourceAbility": "HIDDEN RULE"}]
+        )
+        payload = await render_game_state(game, catalog)
+        assert payload["waiting_on"][0]["card"] is None
+        assert payload["waiting_on"][0]["card_owner"] is None
+        assert "HIDDEN RULE on a card this state does not show" in payload["legal_moves"][0]["why"]
+
+    async def test_my_own_card_can_be_the_one_asking(self, catalog):
+        """"Each opponent chooses and discards a card": my card, their answers."""
+        game = games.waiting_on_an_answer(
+            sources=[{"sourceCardInstanceId": games.FIELD_ELSA, "sourceAbility": "SOME RULE"}]
+        )
+        payload = await render_game_state(game, catalog)
+        assert payload["waiting_on"][0]["card_owner"] == "you"
+        assert "(your card)" in payload["legal_moves"][0]["why"]
+
+    async def test_nobody_waiting_says_nothing(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert "waiting_on" not in payload
+        assert "Waiting on an opponent" not in game_state_markdown(payload)
+        assert "resolving something" in (
+            await render_game_state(games.stuck(), catalog)
+        )["legal_moves"][0]["why"]
+
+
+class TestTheCardAPromptShows:
+    """"Play this revealed character for free?" names the character only in
+    targetCardInstanceId, and the site labels it with targetCardLabel - a key
+    into its own strings. Neither was read, so the question came without the
+    card it was about."""
+
+    def showing(self, **extra):
+        prompt = {"id": "p-show", "player": 1, "type": "boolean", "message": "playForFree",
+                  "targetCardInstanceId": "rev-1", **extra}
+        game = games.playing(pendingPrompts=[prompt])
+        game["myPlayer"]["revealedCardsThisTurn"] = [games.card("rev-1", "10-103")]
+        return game
+
+    async def test_the_card_is_named_under_its_label(self, catalog):
+        payload = await render_game_state(self.showing(targetCardLabel="revealedCard"), catalog)
+        assert payload["prompt_target_cards"] == [{
+            "prompt_id": "p-show",
+            "label": "Revealed card",
+            "instance_id": "rev-1",
+            "card": "Mushu - Stealthy Dragon",
+        }]
+        assert "**Revealed card:** Mushu - Stealthy Dragon `rev-1`" in game_state_markdown(payload)
+
+    async def test_a_label_key_is_read_as_words(self, catalog):
+        payload = await render_game_state(self.showing(targetCardLabel="targetedCard"), catalog)
+        assert payload["prompt_target_cards"][0]["label"] == "Targeted card"
+
+    async def test_without_a_label_the_card_is_still_named(self, catalog):
+        payload = await render_game_state(self.showing(), catalog)
+        assert payload["prompt_target_cards"][0]["label"] == "Card shown"
+
+    async def test_it_counts_as_a_card_the_prompt_is_about(self, catalog):
+        payload = await render_game_state(self.showing(), catalog)
+        assert payload["prompt_cards"] == {"rev-1": "Mushu - Stealthy Dragon"}
+
+    async def test_a_prompt_that_shows_nothing_says_nothing(self, catalog):
+        payload = await render_game_state(games.with_prompt(prompts.BOOLEAN), catalog)
+        assert "prompt_target_cards" not in payload
+
+
+class TestJsonFitsInOneReply:
+    """A four-player Coconut state came back as 104,584 characters of JSON:
+    over what an MCP client shows inline, with the clock at 0:29. The markdown
+    of the same state fit easily, because it printed each card's text once and
+    listed discards by name. The JSON now does the same."""
+
+    BUDGET = 50_000
+
+    @pytest.fixture
+    async def crowded(self):
+        wordy = {c["id"]: c for c in card_fixtures.wordy_cards()}
+
+        class Catalog:
+            async def get(self, definition_id):
+                return wordy.get(definition_id)
+
+        return await render_game_state(games.crowded_coconut_table(list(wordy)), Catalog())
+
+    async def test_the_table_is_as_heavy_as_the_one_that_broke(self, crowded):
+        """Guards the fixture: sent the old way, it is over the limit too."""
+        assert len(as_json(crowded)) > 100_000
+
+    async def test_it_fits_well_inside_one_reply(self, crowded):
+        assert len(as_compact_json(state_json(crowded))) < self.BUDGET
+
+    async def test_nothing_an_agent_acts_on_is_dropped(self, crowded):
+        sent = json.loads(as_compact_json(state_json(crowded)))
+        for key, value in crowded.items():
+            if key not in ("me", "opponents", "opponent"):
+                assert sent[key] == value, key
+        for got, full in zip([sent["me"], *sent["opponents"]], [crowded["me"], *crowded["opponents"]]):
+            for key, value in full.items():
+                if key in LIVE_ZONES:
+                    assert got[key] == [
+                        {k: v for k, v in c.items() if k not in TEXT_FIELDS} for c in value
+                    ], key
+                elif key == "discard":
+                    assert got[key] == [{k: c[k] for k in DISCARD_FIELDS} for c in value]
+                else:
+                    assert got[key] == value, key
+
+    async def test_rules_text_is_sent_once_however_many_copies(self, catalog):
+        """Pete sits on all three opposing boards, and in `opponent` again."""
+        payload = await render_game_state(games.coconut_table(), catalog)
+        pete = payload["opponents"][0]["field"][0]
+        sent = state_json(payload)
+        text = as_compact_json(sent)
+        assert text.count(pete["text"]) == 1
+        assert sent["card_text"][pete["definition_id"]]["text"] == pete["text"]
+        assert all("text" not in c for s in sent["opponents"] for c in s["field"])
+
+    async def test_the_old_singular_opponent_is_trimmed_the_same_way(self, catalog):
+        sent = state_json(await render_game_state(games.coconut_table(), catalog))
+        assert sent["opponent"] == sent["opponents"][0]
+
+    async def test_a_discarded_card_is_named_not_described(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        assert state_json(payload)["me"]["discard"] == [
+            {k: c[k] for k in DISCARD_FIELDS} for c in payload["me"]["discard"]
+        ]
+
+    async def test_the_markdown_keeps_everything(self, catalog):
+        payload = await render_game_state(games.playing(), catalog)
+        before = copy.deepcopy(payload)
+        state_json(payload)
+        assert payload == before

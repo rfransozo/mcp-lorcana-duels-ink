@@ -35,9 +35,12 @@ class FakeGameServer:
         update_delay: float = 0.0,
         log_first: bool = False,
         after_end_turn: dict | None = None,
+        error: str = "Not enough ink",
     ) -> None:
         self.game = game or games.playing()
         self.accept = accept
+        # What a refusal says - the real server has more than one reason.
+        self.error = error
         # Connect, then say nothing - the real server does this for a game
         # that has finished.
         self.silent = silent
@@ -143,7 +146,7 @@ class FakeGameServer:
                 else:
                     await websocket.send(
                         json.dumps({"type": "action_result", "success": False,
-                                    "error": "Not enough ink"})
+                                    "error": self.error})
                     )
         except Exception:
             pass

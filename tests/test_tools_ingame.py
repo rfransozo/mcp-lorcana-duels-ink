@@ -5,6 +5,8 @@ where being wrong costs a turn rather than an error, because the game simply
 sits there.
 """
 
+import json
+
 import pytest
 
 from tests.conftest import call_json, call_text
@@ -430,6 +432,66 @@ class TestPlayingAWholeTurn:
     async def test_an_empty_plan_says_what_one_looks_like(self, router, mcp_client):
         _server, text = await self.plan(router, mcp_client, [])
         assert text.startswith("Error:")
+
+
+class TestARefusalNamesWhoIsAnswering:
+    """Live, at a four-player table: a quest refused with "Waiting for opponent
+    to respond", and the moves attached said only that the server was "still
+    resolving something" - so it went out again with nine seconds left. Now the
+    refusal says whose card is asking, and with which ability."""
+
+    STEPS = [{"do": "quest", "card": games.FIELD_ELSA}, {"do": "end"}]
+
+    async def refused(self, router, mcp_client, call=call_text):
+        async with FakeGameServer(
+            games.waiting_on_an_answer(), accept=False, error="Waiting for opponent to respond"
+        ) as server:
+            router.json_on(
+                f"/api/game/{games.GAME_ID}/ws-token", {"token": "t", "wsUrl": server.url}
+            )
+            result = await call(
+                mcp_client, "duels_play_turn", game_id=games.GAME_ID, steps=self.STEPS
+            )
+            return server, result
+
+    async def test_the_refusal_says_whose_card_and_which_ability(self, router, mcp_client):
+        server, text = await self.refused(router, mcp_client)
+        stopped = text.split("**Stopped:**", 1)[1].split("**Not taken:**", 1)[0]
+        assert "Waiting for opponent to respond" in stopped
+        assert "ENERGY CAPTURE on Ink Amplifier (DRobb's card)" in stopped
+        assert "resolving something" not in stopped
+        assert [m["action"]["type"] for m in server.received] == ["QUEST"]
+
+    async def test_the_json_says_it_too(self, router, mcp_client):
+        _server, payload = await self.refused(router, mcp_client, call=call_json)
+        assert "ENERGY CAPTURE on Ink Amplifier (DRobb's card)" in payload["stopped_because"]
+        assert payload["waiting_on"][0]["card_owner"] == "DRobb"
+        assert payload["remaining"] == self.STEPS
+
+
+class TestEveryStateToolSendsTheCompactJson:
+    """Each tool asks for the compact view at its own call site, so each one is
+    checked: the one that forgot would still send the 100,000-character kind."""
+
+    @pytest.mark.parametrize(
+        "tool, extra",
+        [
+            ("duels_get_game_state", {}),
+            ("duels_wait_for_my_turn", {"timeout_seconds": 5}),
+            ("duels_play_turn", {"steps": [{"do": "quest", "card": games.FIELD_ELSA}]}),
+            ("duels_quest", {"card_instance_id": games.FIELD_ELSA}),
+        ],
+    )
+    async def test_text_once_and_discards_by_name(self, router, mcp_client, tool, extra):
+        _server, text = await with_game(
+            router, mcp_client, games.playing(), tool=tool, response_format="json", **extra
+        )
+        assert "\n" not in text
+        payload = json.loads(text)
+        assert payload["card_text"]
+        assert all(set(c) == {"instance_id", "card", "definition_id"}
+                   for c in payload["me"]["discard"])
+        assert all("text" not in c for c in payload["me"]["hand"])
 
 
 class TestClaimingAStalledGame:
